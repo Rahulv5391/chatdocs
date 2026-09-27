@@ -1,5 +1,6 @@
 package com.company.chatdocs.service;
 
+import com.company.chatdocs.config.AppProperties;
 import com.company.chatdocs.dto.ChatMessageDto;
 import com.company.chatdocs.dto.ChatSessionDto;
 import com.company.chatdocs.dto.Citation;
@@ -15,6 +16,7 @@ import jakarta.annotation.security.PermitAll;
 import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Limit;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -24,13 +26,16 @@ import reactor.core.scheduler.Schedulers;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Chat sessions and their messages. Every method only sees the logged-in user's sessions.
- * {@link #ask} runs the RAG flow: save question → retrieve → stream the generated answer → save it with citations.
+ * {@link #ask} runs the RAG flow: save question → rewrite follow-ups → retrieve → stream the answer (with recent
+ * history) → save it with citations.
  */
 @BrowserCallable
 @PermitAll
@@ -56,10 +61,11 @@ public class ChatService {
 	private final GenerationService generation;
 	private final JsonMapper json;
 	private final TransactionTemplate transaction;
+	private final int historyMessages;
 
 	ChatService(ChatSessionRepository sessions, ChatMessageRepository messages, CurrentUser currentUser,
 			RetrievalService retrieval, GenerationService generation, JsonMapper json,
-			PlatformTransactionManager transactionManager) {
+			PlatformTransactionManager transactionManager, AppProperties properties) {
 		this.sessions = sessions;
 		this.messages = messages;
 		this.currentUser = currentUser;
@@ -67,6 +73,7 @@ public class ChatService {
 		this.generation = generation;
 		this.json = json;
 		this.transaction = new TransactionTemplate(transactionManager);
+		this.historyMessages = properties.rag().historyMessages();
 	}
 
 	/** The user's chats, most recently used first. */
@@ -129,18 +136,23 @@ public class ChatService {
 		}
 		UUID userId = currentUser.get().getId();
 
-		transaction.executeWithoutResult(status -> {
+		// Read the recent history before saving the new question, so it only holds earlier messages.
+		List<GenerationService.HistoryMessage> history = transaction.execute(status -> {
 			ChatSession session = ownSession(sessionId);
-			if (ChatSession.DEFAULT_TITLE.equals(session.getTitle())
-					&& messages.findBySessionIdOrderBySeqAsc(sessionId).isEmpty()) {
+			List<GenerationService.HistoryMessage> recent = recentHistory(sessionId);
+			if (ChatSession.DEFAULT_TITLE.equals(session.getTitle()) && recent.isEmpty()) {
 				session.rename(autoTitle(text));
 			}
 			session.touch();
 			messages.save(new ChatMessage(session, MessageRole.USER, text));
+			return recent;
 		});
 
-		var chunks = retrieval.search(userId, text, List.of());
-		GenerationService.StreamingAnswer answer = generation.stream(text, chunks);
+		// A follow-up ("and for interns?") is searched as a standalone question; the answer still sees the
+		// original wording plus the history.
+		String searchQuery = generation.standaloneQuestion(history, text);
+		var chunks = retrieval.search(userId, searchQuery, List.of());
+		GenerationService.StreamingAnswer answer = generation.stream(text, history, chunks);
 
 		StringBuilder fullText = new StringBuilder();
 		AtomicBoolean saved = new AtomicBoolean();
@@ -172,6 +184,16 @@ public class ChatService {
 
 	private static String withNote(StringBuilder partial, String note) {
 		return partial.isEmpty() ? note : partial.toString().strip() + "\n\n" + note;
+	}
+
+	/** The last {@code app.rag.history-messages} messages, oldest first. */
+	private List<GenerationService.HistoryMessage> recentHistory(UUID sessionId) {
+		List<GenerationService.HistoryMessage> recent = new ArrayList<>(messages
+				.findBySessionIdOrderBySeqDesc(sessionId, Limit.of(historyMessages)).stream()
+				.map(message -> new GenerationService.HistoryMessage(message.getRole(), message.getContent()))
+				.toList());
+		Collections.reverse(recent);
+		return recent;
 	}
 
 	private ChatSession ownSession(UUID sessionId) {

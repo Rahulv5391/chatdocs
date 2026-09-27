@@ -15,7 +15,8 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Replaces Gemini chat in tests. Remembers the last prompt, and answers with {@link FakeChatModel#reply}.
+ * Replaces Gemini chat in tests. Streamed answers use {@link FakeChatModel#reply}; the non-streaming call (used to
+ * rewrite follow-up questions) returns {@link FakeChatModel#rewriteReply}, or the follow-up unchanged if that is null.
  */
 @TestConfiguration(proxyBeanMethods = false)
 public class FakeChatModelConfiguration {
@@ -36,6 +37,16 @@ public class FakeChatModelConfiguration {
 
 		public volatile Prompt lastPrompt;
 
+		/** Prompt of the last non-streaming call (the follow-up rewrite). */
+		public volatile Prompt lastCallPrompt;
+
+		/** Prompt of the last streamed answer. */
+		public volatile Prompt lastStreamPrompt;
+
+		public final AtomicInteger rewriteCalls = new AtomicInteger();
+
+		public volatile String rewriteReply;
+
 		/** Delay between streamed words, to test Stop while an answer is still coming in. */
 		public volatile Duration streamDelay = Duration.ZERO;
 
@@ -45,8 +56,15 @@ public class FakeChatModelConfiguration {
 		@Override
 		public ChatResponse call(Prompt prompt) {
 			calls.incrementAndGet();
+			rewriteCalls.incrementAndGet();
 			lastPrompt = prompt;
-			return response(reply);
+			lastCallPrompt = prompt;
+			if (rewriteReply != null) {
+				return response(rewriteReply);
+			}
+			String text = prompt.getUserMessage().getText();
+			int marker = text.lastIndexOf("Last message:");
+			return response(marker < 0 ? text : text.substring(marker + "Last message:".length()).strip());
 		}
 
 		/** Streams the reply word by word, like Gemini sends small pieces of text. */
@@ -54,6 +72,7 @@ public class FakeChatModelConfiguration {
 		public Flux<ChatResponse> stream(Prompt prompt) {
 			calls.incrementAndGet();
 			lastPrompt = prompt;
+			lastStreamPrompt = prompt;
 			Flux<ChatResponse> words = Flux.fromArray(reply.split("(?<= )")).map(FakeChatModel::response);
 			if (failure != null) {
 				words = words.take(1).concatWith(Flux.error(failure));
@@ -63,8 +82,12 @@ public class FakeChatModelConfiguration {
 
 		public void reset() {
 			calls.set(0);
+			rewriteCalls.set(0);
 			reply = DEFAULT_REPLY;
+			rewriteReply = null;
 			lastPrompt = null;
+			lastCallPrompt = null;
+			lastStreamPrompt = null;
 			streamDelay = Duration.ZERO;
 			failure = null;
 		}

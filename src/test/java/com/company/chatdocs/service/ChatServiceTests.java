@@ -148,6 +148,49 @@ class ChatServiceTests {
 	}
 
 	@Test
+	void followUpIsRewrittenBeforeRetrievalAndHistoryIsSent() {
+		ingest(user("demo"), "leave.txt", "Leave policy: employees get 24 days of annual leave.");
+		ingest(user("demo"), "interns.txt", "Intern handbook: interns get 10 days of annual leave.");
+		UUID sessionId = chatService.createSession().id();
+		askAndWait(sessionId, "What is the leave policy?");
+		assertThat(chatModel.rewriteCalls.get()).as("first question is not rewritten").isZero();
+
+		// "what about them?" shares no words with the documents, so without the rewrite nothing would be found.
+		chatModel.rewriteReply = "How many days of annual leave do interns get?";
+		ChatMessageDto answer = askAndWait(sessionId, "what about them?").get(1);
+
+		assertThat(chatModel.rewriteCalls.get()).isEqualTo(1);
+		assertThat(chatModel.lastCallPrompt.getUserMessage().getText())
+				.contains("User: What is the leave policy?", "Last message: what about them?");
+		assertThat(answer.content()).isNotEqualTo(GenerationService.NO_ANSWER);
+		assertThat(answer.citations()).extracting(Citation::fileName).containsExactly("interns.txt");
+
+		// The answer prompt: system rules, the earlier question and answer, then the follow-up in its own words.
+		var instructions = chatModel.lastStreamPrompt.getInstructions();
+		assertThat(instructions).extracting(message -> message.getMessageType().name())
+				.containsExactly("SYSTEM", "USER", "ASSISTANT", "USER");
+		assertThat(instructions.get(1).getText()).isEqualTo("What is the leave policy?");
+		assertThat(instructions.get(2).getText()).as("old [n] markers are removed")
+				.isEqualTo("Employees get 24 days of annual leave.");
+		assertThat(instructions.get(3).getText()).isEqualTo("what about them?");
+	}
+
+	@Test
+	void historyIsLimitedToTheLastMessages() {
+		UUID sessionId = chatService.createSession().id();
+		ingest(user("demo"), "leave.txt", "Leave policy: employees get 24 days of annual leave.");
+		for (int i = 1; i <= 4; i++) {
+			askAndWait(sessionId, "annual leave question " + i);
+		}
+
+		// 8 earlier messages exist; only the last 6 (app.rag.history-messages) are sent, plus system + question.
+		askAndWait(sessionId, "annual leave question 5");
+		var instructions = chatModel.lastStreamPrompt.getInstructions();
+		assertThat(instructions).hasSize(1 + 6 + 1);
+		assertThat(instructions.get(1).getText()).isEqualTo("annual leave question 2");
+	}
+
+	@Test
 	void offTopicQuestionSkipsTheModel() {
 		ingest(user("demo"), "leave.txt", "Leave policy: employees get 24 days of annual leave.");
 		UUID sessionId = chatService.createSession().id();

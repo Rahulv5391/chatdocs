@@ -25,10 +25,12 @@ public record AppProperties(
 	/**
 	 * @param topK                how many chunks to retrieve per question
 	 * @param similarityThreshold minimum cosine similarity (0..1) for a chunk to count as relevant
+	 * @param historyMessages     how many earlier messages of the chat are sent along with a question
 	 */
 	public record Rag(
 			@DefaultValue("5") int topK,
-			@DefaultValue("0.55") double similarityThreshold) {
+			@DefaultValue("0.55") double similarityThreshold,
+			@DefaultValue("6") int historyMessages) {
 	}
 
 	/**
