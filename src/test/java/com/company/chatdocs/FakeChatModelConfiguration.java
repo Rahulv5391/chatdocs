@@ -8,7 +8,9 @@ import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
+import reactor.core.publisher.Flux;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -34,17 +36,41 @@ public class FakeChatModelConfiguration {
 
 		public volatile Prompt lastPrompt;
 
+		/** Delay between streamed words, to test Stop while an answer is still coming in. */
+		public volatile Duration streamDelay = Duration.ZERO;
+
+		/** If set, the stream fails with this after the first word. */
+		public volatile RuntimeException failure;
+
 		@Override
 		public ChatResponse call(Prompt prompt) {
 			calls.incrementAndGet();
 			lastPrompt = prompt;
-			return new ChatResponse(List.of(new Generation(new AssistantMessage(reply))));
+			return response(reply);
+		}
+
+		/** Streams the reply word by word, like Gemini sends small pieces of text. */
+		@Override
+		public Flux<ChatResponse> stream(Prompt prompt) {
+			calls.incrementAndGet();
+			lastPrompt = prompt;
+			Flux<ChatResponse> words = Flux.fromArray(reply.split("(?<= )")).map(FakeChatModel::response);
+			if (failure != null) {
+				words = words.take(1).concatWith(Flux.error(failure));
+			}
+			return streamDelay.isZero() ? words : words.delayElements(streamDelay);
 		}
 
 		public void reset() {
 			calls.set(0);
 			reply = DEFAULT_REPLY;
 			lastPrompt = null;
+			streamDelay = Duration.ZERO;
+			failure = null;
+		}
+
+		private static ChatResponse response(String text) {
+			return new ChatResponse(List.of(new Generation(new AssistantMessage(text))));
 		}
 
 	}

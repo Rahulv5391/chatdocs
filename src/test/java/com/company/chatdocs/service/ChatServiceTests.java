@@ -27,6 +27,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 
+import java.time.Duration;
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -85,7 +87,7 @@ class ChatServiceTests {
 		UUID docId = ingest(user("demo"), "leave.txt", "Leave policy: employees get 24 days of annual leave.");
 		UUID sessionId = chatService.createSession().id();
 
-		var saved = chatService.ask(sessionId, "How many days of annual leave do employees get?");
+		var saved = askAndWait(sessionId, "How many days of annual leave do employees get?");
 
 		assertThat(saved).extracting(ChatMessageDto::role).containsExactly(MessageRole.USER, MessageRole.ASSISTANT);
 		ChatMessageDto answer = saved.get(1);
@@ -104,11 +106,53 @@ class ChatServiceTests {
 	}
 
 	@Test
+	void answerIsStreamedInPiecesAndSavedWhenComplete() {
+		ingest(user("demo"), "leave.txt", "Leave policy: employees get 24 days of annual leave.");
+		UUID sessionId = chatService.createSession().id();
+
+		List<String> tokens = chatService.ask(sessionId, "annual leave days").collectList().block(Duration.ofSeconds(10));
+
+		assertThat(tokens).hasSizeGreaterThan(1);
+		assertThat(String.join("", tokens)).isEqualTo(FakeChatModel.DEFAULT_REPLY);
+		ChatMessageDto saved = chatService.getMessages(sessionId).getLast();
+		assertThat(saved.content()).isEqualTo(FakeChatModel.DEFAULT_REPLY);
+		assertThat(saved.citations()).extracting(Citation::index).containsExactly(1);
+	}
+
+	@Test
+	void stoppingSavesThePartialAnswer() {
+		ingest(user("demo"), "leave.txt", "Leave policy: employees get 24 days of annual leave.");
+		chatModel.streamDelay = Duration.ofMillis(50);
+		UUID sessionId = chatService.createSession().id();
+
+		// take(2) cancels the stream after two pieces, like the Stop button.
+		List<String> tokens = chatService.ask(sessionId, "annual leave days").take(2).collectList()
+				.block(Duration.ofSeconds(10));
+
+		ChatMessageDto saved = chatService.getMessages(sessionId).getLast();
+		assertThat(saved.role()).isEqualTo(MessageRole.ASSISTANT);
+		assertThat(saved.content()).startsWith(String.join("", tokens).strip()).endsWith(ChatService.STOPPED_NOTE);
+		assertThat(chatService.getMessages(sessionId)).hasSize(2);
+	}
+
+	@Test
+	void failedGenerationSavesAnErrorNoteAndReportsTheError() {
+		ingest(user("demo"), "leave.txt", "Leave policy: employees get 24 days of annual leave.");
+		chatModel.failure = new IllegalStateException("Gemini is down");
+		UUID sessionId = chatService.createSession().id();
+
+		assertThatThrownBy(() -> chatService.ask(sessionId, "annual leave days").blockLast(Duration.ofSeconds(10)))
+				.hasMessageContaining("Gemini is down");
+
+		assertThat(chatService.getMessages(sessionId).getLast().content()).endsWith(ChatService.ERROR_NOTE);
+	}
+
+	@Test
 	void offTopicQuestionSkipsTheModel() {
 		ingest(user("demo"), "leave.txt", "Leave policy: employees get 24 days of annual leave.");
 		UUID sessionId = chatService.createSession().id();
 
-		ChatMessageDto answer = chatService.ask(sessionId, "Explain quantum chromodynamics").get(1);
+		ChatMessageDto answer = askAndWait(sessionId, "Explain quantum chromodynamics").get(1);
 
 		assertThat(answer.content()).isEqualTo(GenerationService.NO_ANSWER);
 		assertThat(answer.citations()).isEmpty();
@@ -122,7 +166,7 @@ class ChatServiceTests {
 		chatModel.reply = "Interns get 10 days [2].";
 		UUID sessionId = chatService.createSession().id();
 
-		ChatMessageDto answer = chatService.ask(sessionId, "annual leave policy days").get(1);
+		ChatMessageDto answer = askAndWait(sessionId, "annual leave policy days").get(1);
 
 		assertThat(answer.citations()).extracting(Citation::index).containsExactly(2);
 	}
@@ -132,7 +176,7 @@ class ChatServiceTests {
 		ingest(user("alice"), "alice-leave.txt", "Leave policy: alice staff get 30 days of annual leave.");
 		UUID sessionId = chatService.createSession().id();
 
-		ChatMessageDto answer = chatService.ask(sessionId, "How many days of annual leave?").get(1);
+		ChatMessageDto answer = askAndWait(sessionId, "How many days of annual leave?").get(1);
 
 		assertThat(answer.content()).isEqualTo(GenerationService.NO_ANSWER);
 		assertThat(chatModel.calls.get()).isZero();
@@ -142,8 +186,8 @@ class ChatServiceTests {
 	void firstQuestionNamesTheChat() {
 		UUID sessionId = chatService.createSession().id();
 
-		chatService.ask(sessionId, "What is the travel policy for international trips and conferences abroad?");
-		chatService.ask(sessionId, "Second question");
+		askAndWait(sessionId, "What is the travel policy for international trips and conferences abroad?");
+		askAndWait(sessionId, "Second question");
 
 		assertThat(chatService.getSession(sessionId).title())
 				.isEqualTo("What is the travel policy for international trips and confe…");
@@ -156,7 +200,7 @@ class ChatServiceTests {
 
 		assertThat(chatService.renameSession(created.id(), "  Leave questions  ").title()).isEqualTo("Leave questions");
 
-		chatService.ask(created.id(), "hello");
+		askAndWait(created.id(), "hello");
 		chatService.deleteSession(created.id());
 		assertThat(chatService.listSessions()).isEmpty();
 		assertThat(messages.count()).isZero();
@@ -166,8 +210,8 @@ class ChatServiceTests {
 	void messagesArePersistedInOrder() {
 		UUID id = chatService.createSession().id();
 
-		chatService.ask(id, "First?");
-		chatService.ask(id, "Second?");
+		askAndWait(id, "First?");
+		askAndWait(id, "Second?");
 
 		assertThat(chatService.getMessages(id)).extracting(ChatMessageDto::role, ChatMessageDto::content)
 				.containsExactly(
@@ -197,6 +241,13 @@ class ChatServiceTests {
 		assertThatThrownBy(() -> chatService.deleteSession(id)).isInstanceOf(ChatSessionNotFoundException.class);
 		assertThat(sessions.findById(id)).isPresent();
 		assertThat(messages.count()).isZero();
+	}
+
+	/** Runs the streaming ask to the end and returns the saved question and answer. */
+	private List<ChatMessageDto> askAndWait(UUID sessionId, String question) {
+		chatService.ask(sessionId, question).blockLast(Duration.ofSeconds(10));
+		var all = chatService.getMessages(sessionId);
+		return all.subList(all.size() - 2, all.size());
 	}
 
 	private AppUser user(String username) {

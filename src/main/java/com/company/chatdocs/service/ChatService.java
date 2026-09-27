@@ -13,24 +13,36 @@ import com.company.chatdocs.repository.ChatSessionRepository;
 import com.vaadin.hilla.BrowserCallable;
 import jakarta.annotation.security.PermitAll;
 import org.jspecify.annotations.NonNull;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Chat sessions and their messages. Every method only sees the logged-in user's sessions.
- * {@link #ask} runs the RAG flow: save question → retrieve → generate → save answer with citations.
+ * {@link #ask} runs the RAG flow: save question → retrieve → stream the generated answer → save it with citations.
  */
 @BrowserCallable
 @PermitAll
 public class ChatService {
 
+	private static final Logger log = LoggerFactory.getLogger(ChatService.class);
+
 	static final int MAX_TITLE_LENGTH = 200;
+
+	static final String STOPPED_NOTE = "_(Stopped)_";
+
+	static final String ERROR_NOTE = "_(Something went wrong while generating the answer. Please try again.)_";
 
 	private static final int AUTO_TITLE_LENGTH = 60;
 
@@ -103,38 +115,63 @@ public class ChatService {
 	}
 
 	/**
-	 * Answers a question from the user's documents and returns the saved question and answer.
-	 * Not one big transaction: the slow Gemini call happens between two short ones, so no database
-	 * connection is held while waiting for the model.
+	 * Answers a question from the user's documents, streaming the answer as it is generated.
+	 * <p>
+	 * The question is saved and retrieval runs right away (on the request thread, where the logged-in user is
+	 * known). The returned Flux then streams Gemini's tokens; when it completes, the full answer and its citations
+	 * are saved before the browser gets onComplete. If the browser cancels (Stop button), the partial answer is
+	 * saved with a note. No database transaction is open while tokens stream.
 	 */
-	public @NonNull List<@NonNull ChatMessageDto> ask(@NonNull UUID sessionId, @NonNull String question) {
+	public @NonNull Flux<@NonNull String> ask(@NonNull UUID sessionId, @NonNull String question) {
 		String text = question.strip();
 		if (text.isEmpty()) {
 			throw new InvalidInputException("The message can't be empty.");
 		}
 		UUID userId = currentUser.get().getId();
 
-		ChatMessage userMessage = transaction.execute(status -> {
+		transaction.executeWithoutResult(status -> {
 			ChatSession session = ownSession(sessionId);
 			if (ChatSession.DEFAULT_TITLE.equals(session.getTitle())
 					&& messages.findBySessionIdOrderBySeqAsc(sessionId).isEmpty()) {
 				session.rename(autoTitle(text));
 			}
 			session.touch();
-			return messages.save(new ChatMessage(session, MessageRole.USER, text));
+			messages.save(new ChatMessage(session, MessageRole.USER, text));
 		});
 
 		var chunks = retrieval.search(userId, text, List.of());
-		GenerationService.Answer answer = generation.answer(text, chunks);
+		GenerationService.StreamingAnswer answer = generation.stream(text, chunks);
 
-		ChatMessage reply = transaction.execute(status -> {
-			ChatSession session = ownSession(sessionId);
+		StringBuilder fullText = new StringBuilder();
+		AtomicBoolean saved = new AtomicBoolean();
+		return answer.tokens()
+				.doOnNext(fullText::append)
+				// Save on a worker thread (JPA blocks), and before the browser sees onComplete.
+				.concatWith(Mono.<String>fromRunnable(() -> saveReply(sessionId, fullText.toString(), answer, saved))
+					.subscribeOn(Schedulers.boundedElastic()))
+				.doOnCancel(() -> saveReply(sessionId, withNote(fullText, STOPPED_NOTE), answer, saved))
+				.doOnError(error -> {
+					log.warn("Answer generation failed for session {}", sessionId, error);
+					saveReply(sessionId, withNote(fullText, ERROR_NOTE), answer, saved);
+				});
+	}
+
+	/** Saves the assistant's message once, whichever of complete / cancel / error happens first. */
+	private void saveReply(UUID sessionId, String text, GenerationService.StreamingAnswer answer, AtomicBoolean saved) {
+		if (!saved.compareAndSet(false, true)) {
+			return;
+		}
+		String content = text.isBlank() ? GenerationService.NO_ANSWER : text.strip();
+		String citations = json.writeValueAsString(GenerationService.citedOnly(content, answer.citations()));
+		// Runs outside the request thread, so no currentUser here; ask() already checked ownership.
+		transaction.executeWithoutResult(status -> sessions.findById(sessionId).ifPresent(session -> {
 			session.touch();
-			return messages.save(new ChatMessage(session, MessageRole.ASSISTANT, answer.text(),
-					json.writeValueAsString(answer.citations())));
-		});
+			messages.save(new ChatMessage(session, MessageRole.ASSISTANT, content, citations));
+		}));
+	}
 
-		return List.of(toDto(userMessage), toDto(reply));
+	private static String withNote(StringBuilder partial, String note) {
+		return partial.isEmpty() ? note : partial.toString().strip() + "\n\n" + note;
 	}
 
 	private ChatSession ownSession(UUID sessionId) {

@@ -8,6 +8,7 @@ import org.springframework.ai.document.Document;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
 
 import java.util.List;
 import java.util.Set;
@@ -16,7 +17,7 @@ import java.util.stream.Collectors;
 
 /**
  * RAG step 3 (generation): the only place that calls the chat LLM. Given a question and the retrieved chunks,
- * asks Gemini for an answer grounded in those chunks, with [n] citation markers.
+ * streams Gemini's answer, grounded in those chunks, with [n] citation markers.
  */
 @Service
 public class GenerationService {
@@ -39,32 +40,34 @@ public class GenerationService {
 		this.systemPrompt = systemPrompt;
 	}
 
-	public record Answer(String text, List<Citation> citations) {
+	/**
+	 * @param tokens    the answer, piece by piece as Gemini produces it (nothing happens until subscribed)
+	 * @param citations one per retrieved chunk; use {@link #citedOnly} on the full text to keep the used ones
+	 */
+	public record StreamingAnswer(Flux<String> tokens, List<Citation> citations) {
 	}
 
-	/**
-	 * @return the answer, and the citations whose [n] marker appears in it
-	 */
-	public Answer answer(String question, List<Document> chunks) {
+	public StreamingAnswer stream(String question, List<Document> chunks) {
 		if (chunks.isEmpty()) {
-			return new Answer(NO_ANSWER, List.of());
+			return new StreamingAnswer(Flux.just(NO_ANSWER), List.of());
 		}
 		PromptBuilder.Context context = promptBuilder.build(chunks);
 
-		long start = System.currentTimeMillis();
-		String text = chatClient.prompt()
-				.system(system -> system.text(systemPrompt).param("context", context.text()))
-				.user(question)
-				.call()
-				.content();
-		log.info("Generated answer from {} chunk(s) in {} ms", chunks.size(), System.currentTimeMillis() - start);
-
-		String answer = text == null || text.isBlank() ? NO_ANSWER : text.strip();
-		return new Answer(answer, citedOnly(answer, context.citations()));
+		Flux<String> tokens = Flux.defer(() -> {
+			long start = System.currentTimeMillis();
+			return chatClient.prompt()
+					.system(system -> system.text(systemPrompt).param("context", context.text()))
+					.user(question)
+					.stream()
+					.content()
+					.doOnComplete(() -> log.info("Streamed answer from {} chunk(s) in {} ms", chunks.size(),
+							System.currentTimeMillis() - start));
+		});
+		return new StreamingAnswer(tokens, context.citations());
 	}
 
 	/** Keeps only the passages the model actually cited, so the sources shown match the text. */
-	private static List<Citation> citedOnly(String answer, List<Citation> citations) {
+	public static List<Citation> citedOnly(String answer, List<Citation> citations) {
 		Set<Integer> used = CITATION_MARKER.matcher(answer).results()
 				.map(match -> Integer.parseInt(match.group(1)))
 				.collect(Collectors.toSet());

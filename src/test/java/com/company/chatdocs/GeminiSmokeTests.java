@@ -11,6 +11,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 
+import java.time.Duration;
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -37,6 +40,21 @@ class GeminiSmokeTests {
 
 		log.info("Gemini reply: {}", reply);
 		assertThat(reply).isNotBlank();
+	}
+
+	@Test
+	void chatModelStreamsInPieces() {
+		List<String> pieces = chatClient.prompt()
+				.user("Write about 150 words on why teams document their policies.")
+				.stream()
+				.content()
+				.collectList()
+				.block(Duration.ofSeconds(60));
+
+		log.info("Gemini streamed {} piece(s): {}", pieces.size(), pieces);
+		// A short reply can arrive as one piece; ~150 words comes in several.
+		assertThat(pieces).hasSizeGreaterThan(1);
+		assertThat(String.join("", pieces)).isNotBlank();
 	}
 
 	@Test
