@@ -2,10 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { ViewConfig } from '@vaadin/hilla-file-router/types.js';
 import { EndpointError, type Subscription } from '@vaadin/hilla-frontend';
-import { Button, MessageInput, MessageList, Notification, TextField } from '@vaadin/react-components';
+import { Button, Markdown, Message, MessageInput, Notification, TextField } from '@vaadin/react-components';
 import { ChatService } from 'Frontend/generated/endpoints';
 import type ChatMessageDto from 'Frontend/generated/com/company/chatdocs/dto/ChatMessageDto';
 import MessageRole from 'Frontend/generated/com/company/chatdocs/entity/MessageRole';
+import type Citation from 'Frontend/generated/com/company/chatdocs/dto/Citation';
+import CitationChips from 'Frontend/components/CitationChips';
 import { useAuth } from 'Frontend/auth';
 
 export const config: ViewConfig = {
@@ -32,6 +34,7 @@ export default function ChatSessionView() {
   const [messages, setMessages] = useState<ChatMessageDto[]>([]);
   const [pending, setPending] = useState<Pending>();
   const subscription = useRef<Subscription<string>>(undefined);
+  const bottom = useRef<HTMLDivElement>(null);
 
   // Reload from the server: the saved answer has its id and citations, and the first question names the chat.
   const reload = useCallback(async () => {
@@ -84,18 +87,25 @@ export default function ChatSessionView() {
   }
 
   const userName = state.user?.displayName ?? 'You';
-  const items = messages.map((message) => ({
+  type Item = { key: string; role: MessageRole; text: string; time: string; citations: Citation[] };
+  const items: Item[] = messages.map((message) => ({
+    key: message.id,
+    role: message.role,
     text: message.content,
     time: new Date(message.createdAt).toLocaleTimeString(),
-    userName: message.role === MessageRole.USER ? userName : 'Assistant',
-    userColorIndex: message.role === MessageRole.USER ? 1 : 3,
+    citations: message.citations,
   }));
   if (pending) {
     items.push(
-      { text: pending.question, time: '', userName, userColorIndex: 1 },
-      { text: pending.answer || '_Thinking…_', time: '', userName: 'Assistant', userColorIndex: 3 },
+      { key: 'pending-q', role: MessageRole.USER, text: pending.question, time: '', citations: [] },
+      { key: 'pending-a', role: MessageRole.ASSISTANT, text: pending.answer || '_Thinking…_', time: '', citations: [] },
     );
   }
+
+  // Keep the newest message in view while an answer streams in.
+  useEffect(() => {
+    bottom.current?.scrollIntoView({ block: 'end' });
+  }, [items.length, pending?.answer]);
 
   return (
     <main style={{ display: 'flex', flexDirection: 'column', height: '100%', boxSizing: 'border-box', padding: '1rem' }}>
@@ -110,7 +120,20 @@ export default function ChatSessionView() {
           onChange={(e) => rename(e.target.value)}
         />
       </div>
-      <MessageList items={items} markdown style={{ flexGrow: 1, overflow: 'auto' }} />
+      <div style={{ flexGrow: 1, overflow: 'auto' }}>
+        {items.map((item) => (
+          <Message
+            key={item.key}
+            userName={item.role === MessageRole.USER ? userName : 'Assistant'}
+            userColorIndex={item.role === MessageRole.USER ? 1 : 3}
+            time={item.time}
+          >
+            <Markdown>{item.text}</Markdown>
+            <CitationChips citations={item.citations} idPrefix={item.key} />
+          </Message>
+        ))}
+        <div ref={bottom} />
+      </div>
       {items.length === 0 && <p>Ask a question about your documents.</p>}
       <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
         <MessageInput style={{ flexGrow: 1 }} disabled={!!pending} onSubmit={(e) => ask(e.detail.value)} />
