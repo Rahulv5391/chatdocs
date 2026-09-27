@@ -3,7 +3,8 @@ import { useNavigate, useParams } from 'react-router';
 import { ViewConfig } from '@vaadin/hilla-file-router/types.js';
 import { EndpointError, type Subscription } from '@vaadin/hilla-frontend';
 import { Button, Markdown, Message, MessageInput, Notification, TextField } from '@vaadin/react-components';
-import { ChatService } from 'Frontend/generated/endpoints';
+import { ChatService, DocumentService } from 'Frontend/generated/endpoints';
+import type ChatSessionDto from 'Frontend/generated/com/company/chatdocs/dto/ChatSessionDto';
 import type ChatMessageDto from 'Frontend/generated/com/company/chatdocs/dto/ChatMessageDto';
 import MessageRole from 'Frontend/generated/com/company/chatdocs/entity/MessageRole';
 import type Citation from 'Frontend/generated/com/company/chatdocs/dto/Citation';
@@ -23,6 +24,18 @@ function errorMessage(e: unknown, fallback: string) {
   return e instanceof EndpointError ? e.message : fallback;
 }
 
+/** Which documents the chat answers from, for the line under the title. */
+async function scopeLabel(session: ChatSessionDto) {
+  if (!session.scoped) {
+    return 'All your documents';
+  }
+  if (session.documentIds.length === 0) {
+    return 'No documents (the chosen ones were deleted)';
+  }
+  const names = new Map((await DocumentService.list()).map((d) => [d.id, d.fileName]));
+  return session.documentIds.map((id) => names.get(id) ?? 'deleted document').join(', ');
+}
+
 /** A question whose answer is still streaming in. */
 type Pending = { question: string; answer: string };
 
@@ -31,6 +44,7 @@ export default function ChatSessionView() {
   const navigate = useNavigate();
   const { state } = useAuth();
   const [title, setTitle] = useState('');
+  const [scope, setScope] = useState('');
   const [messages, setMessages] = useState<ChatMessageDto[]>([]);
   const [pending, setPending] = useState<Pending>();
   const subscription = useRef<Subscription<string>>(undefined);
@@ -44,6 +58,7 @@ export default function ChatSessionView() {
     ]);
     setTitle(session.title);
     setMessages(loaded);
+    setScope(await scopeLabel(session));
   }, [sessionId]);
 
   useEffect(() => {
@@ -120,6 +135,7 @@ export default function ChatSessionView() {
           onChange={(e) => rename(e.target.value)}
         />
       </div>
+      <small style={{ color: '#64748b', margin: '0.25rem 0 0.5rem' }}>Using: {scope}</small>
       <div style={{ flexGrow: 1, overflow: 'auto' }}>
         {items.map((item) => (
           <Message

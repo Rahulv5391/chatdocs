@@ -4,16 +4,20 @@ import com.company.chatdocs.config.AppProperties;
 import com.company.chatdocs.dto.ChatMessageDto;
 import com.company.chatdocs.dto.ChatSessionDto;
 import com.company.chatdocs.dto.Citation;
+import com.company.chatdocs.entity.AppUser;
 import com.company.chatdocs.entity.ChatMessage;
 import com.company.chatdocs.entity.ChatSession;
 import com.company.chatdocs.entity.MessageRole;
 import com.company.chatdocs.exception.ChatSessionNotFoundException;
+import com.company.chatdocs.exception.DocumentNotFoundException;
 import com.company.chatdocs.exception.InvalidInputException;
 import com.company.chatdocs.repository.ChatMessageRepository;
 import com.company.chatdocs.repository.ChatSessionRepository;
+import com.company.chatdocs.repository.DocumentRepository;
 import com.vaadin.hilla.BrowserCallable;
 import jakarta.annotation.security.PermitAll;
 import org.jspecify.annotations.NonNull;
+import org.springframework.ai.document.Document;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Limit;
@@ -29,6 +33,7 @@ import tools.jackson.databind.json.JsonMapper;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -56,6 +61,7 @@ public class ChatService {
 
 	private final ChatSessionRepository sessions;
 	private final ChatMessageRepository messages;
+	private final DocumentRepository documents;
 	private final CurrentUser currentUser;
 	private final RetrievalService retrieval;
 	private final GenerationService generation;
@@ -63,11 +69,13 @@ public class ChatService {
 	private final TransactionTemplate transaction;
 	private final int historyMessages;
 
-	ChatService(ChatSessionRepository sessions, ChatMessageRepository messages, CurrentUser currentUser,
+	ChatService(ChatSessionRepository sessions, ChatMessageRepository messages, DocumentRepository documents,
+			CurrentUser currentUser,
 			RetrievalService retrieval, GenerationService generation, JsonMapper json,
 			PlatformTransactionManager transactionManager, AppProperties properties) {
 		this.sessions = sessions;
 		this.messages = messages;
+		this.documents = documents;
 		this.currentUser = currentUser;
 		this.retrieval = retrieval;
 		this.generation = generation;
@@ -84,9 +92,21 @@ public class ChatService {
 				.toList();
 	}
 
+	/**
+	 * @param documentIds documents the chat may use; empty means all of the user's documents
+	 * @throws DocumentNotFoundException if any id isn't one of the user's documents
+	 */
 	@Transactional
-	public @NonNull ChatSessionDto createSession() {
-		return ChatSessionDto.from(sessions.save(new ChatSession(currentUser.get())));
+	public @NonNull ChatSessionDto createSession(@NonNull List<@NonNull UUID> documentIds) {
+		AppUser owner = currentUser.get();
+		if (documentIds.isEmpty()) {
+			return ChatSessionDto.from(sessions.save(new ChatSession(owner)));
+		}
+		Set<UUID> scope = Set.copyOf(documentIds);
+		if (documents.countByOwnerIdAndIdIn(owner.getId(), scope) != scope.size()) {
+			throw new DocumentNotFoundException();
+		}
+		return ChatSessionDto.from(sessions.save(new ChatSession(owner, scope)));
 	}
 
 	@Transactional(readOnly = true)
@@ -136,8 +156,8 @@ public class ChatService {
 		}
 		UUID userId = currentUser.get().getId();
 
-		// Read the recent history before saving the new question, so it only holds earlier messages.
-		List<GenerationService.HistoryMessage> history = transaction.execute(status -> {
+		// Read the scope and recent history before saving the new question, so history only holds earlier messages.
+		AskContext context = transaction.execute(status -> {
 			ChatSession session = ownSession(sessionId);
 			List<GenerationService.HistoryMessage> recent = recentHistory(sessionId);
 			if (ChatSession.DEFAULT_TITLE.equals(session.getTitle()) && recent.isEmpty()) {
@@ -145,13 +165,17 @@ public class ChatService {
 			}
 			session.touch();
 			messages.save(new ChatMessage(session, MessageRole.USER, text));
-			return recent;
+			return new AskContext(recent, session.isScoped(), session.getDocumentIds());
 		});
+		List<GenerationService.HistoryMessage> history = context.history();
 
 		// A follow-up ("and for interns?") is searched as a standalone question; the answer still sees the
 		// original wording plus the history.
 		String searchQuery = generation.standaloneQuestion(history, text);
-		var chunks = retrieval.search(userId, searchQuery, List.of());
+		// A scoped chat whose documents were all deleted searches nothing (not everything).
+		List<Document> chunks = context.scoped() && context.documentIds().isEmpty()
+				? List.of()
+				: retrieval.search(userId, searchQuery, context.documentIds());
 		GenerationService.StreamingAnswer answer = generation.stream(text, history, chunks);
 
 		StringBuilder fullText = new StringBuilder();
@@ -184,6 +208,9 @@ public class ChatService {
 
 	private static String withNote(StringBuilder partial, String note) {
 		return partial.isEmpty() ? note : partial.toString().strip() + "\n\n" + note;
+	}
+
+	private record AskContext(List<GenerationService.HistoryMessage> history, boolean scoped, Set<UUID> documentIds) {
 	}
 
 	/** The last {@code app.rag.history-messages} messages, oldest first. */

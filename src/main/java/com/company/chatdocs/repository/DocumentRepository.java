@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -20,6 +21,8 @@ public interface DocumentRepository extends JpaRepository<Document, UUID> {
 	boolean existsByOwnerIdAndChecksumSha256(UUID ownerId, String checksumSha256);
 
 	Optional<Document> findByIdAndOwnerId(UUID id, UUID ownerId);
+
+	long countByOwnerIdAndIdIn(UUID ownerId, Collection<UUID> ids);
 
 	/**
 	 * Updates only the processing fields. Unlike save(), this never re-creates a row that was deleted

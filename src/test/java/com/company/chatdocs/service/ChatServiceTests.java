@@ -85,7 +85,7 @@ class ChatServiceTests {
 	@Test
 	void answersFromDocumentsWithCitations() {
 		UUID docId = ingest(user("demo"), "leave.txt", "Leave policy: employees get 24 days of annual leave.");
-		UUID sessionId = chatService.createSession().id();
+		UUID sessionId = chatService.createSession(List.of()).id();
 
 		var saved = askAndWait(sessionId, "How many days of annual leave do employees get?");
 
@@ -108,7 +108,7 @@ class ChatServiceTests {
 	@Test
 	void answerIsStreamedInPiecesAndSavedWhenComplete() {
 		ingest(user("demo"), "leave.txt", "Leave policy: employees get 24 days of annual leave.");
-		UUID sessionId = chatService.createSession().id();
+		UUID sessionId = chatService.createSession(List.of()).id();
 
 		List<String> tokens = chatService.ask(sessionId, "annual leave days").collectList().block(Duration.ofSeconds(10));
 
@@ -123,7 +123,7 @@ class ChatServiceTests {
 	void stoppingSavesThePartialAnswer() {
 		ingest(user("demo"), "leave.txt", "Leave policy: employees get 24 days of annual leave.");
 		chatModel.streamDelay = Duration.ofMillis(50);
-		UUID sessionId = chatService.createSession().id();
+		UUID sessionId = chatService.createSession(List.of()).id();
 
 		// take(2) cancels the stream after two pieces, like the Stop button.
 		List<String> tokens = chatService.ask(sessionId, "annual leave days").take(2).collectList()
@@ -139,7 +139,7 @@ class ChatServiceTests {
 	void failedGenerationSavesAnErrorNoteAndReportsTheError() {
 		ingest(user("demo"), "leave.txt", "Leave policy: employees get 24 days of annual leave.");
 		chatModel.failure = new IllegalStateException("Gemini is down");
-		UUID sessionId = chatService.createSession().id();
+		UUID sessionId = chatService.createSession(List.of()).id();
 
 		assertThatThrownBy(() -> chatService.ask(sessionId, "annual leave days").blockLast(Duration.ofSeconds(10)))
 				.hasMessageContaining("Gemini is down");
@@ -151,7 +151,7 @@ class ChatServiceTests {
 	void followUpIsRewrittenBeforeRetrievalAndHistoryIsSent() {
 		ingest(user("demo"), "leave.txt", "Leave policy: employees get 24 days of annual leave.");
 		ingest(user("demo"), "interns.txt", "Intern handbook: interns get 10 days of annual leave.");
-		UUID sessionId = chatService.createSession().id();
+		UUID sessionId = chatService.createSession(List.of()).id();
 		askAndWait(sessionId, "What is the leave policy?");
 		assertThat(chatModel.rewriteCalls.get()).as("first question is not rewritten").isZero();
 
@@ -177,7 +177,7 @@ class ChatServiceTests {
 
 	@Test
 	void historyIsLimitedToTheLastMessages() {
-		UUID sessionId = chatService.createSession().id();
+		UUID sessionId = chatService.createSession(List.of()).id();
 		ingest(user("demo"), "leave.txt", "Leave policy: employees get 24 days of annual leave.");
 		for (int i = 1; i <= 4; i++) {
 			askAndWait(sessionId, "annual leave question " + i);
@@ -191,9 +191,48 @@ class ChatServiceTests {
 	}
 
 	@Test
+	void scopedChatOnlyUsesChosenDocuments() {
+		UUID staff = ingest(user("demo"), "staff-leave.txt", "Leave policy: staff get 24 days of annual leave.");
+		ingest(user("demo"), "intern-leave.txt", "Leave policy: interns get 10 days of annual leave.");
+
+		ChatSessionDto session = chatService.createSession(List.of(staff));
+		assertThat(session.scoped()).isTrue();
+		assertThat(session.documentIds()).containsExactly(staff);
+
+		ChatMessageDto answer = askAndWait(session.id(), "How many days of annual leave do interns get?").get(1);
+
+		assertThat(chatModel.lastStreamPrompt.getSystemMessage().getText())
+				.contains("staff-leave.txt").doesNotContain("intern-leave.txt");
+		assertThat(answer.citations()).extracting(Citation::fileName).containsOnly("staff-leave.txt");
+	}
+
+	@Test
+	void scopedChatWhoseDocumentsWereDeletedSearchesNothing() {
+		UUID only = ingest(user("demo"), "leave.txt", "Leave policy: employees get 24 days of annual leave.");
+		ingest(user("demo"), "other.txt", "Leave policy: everyone else gets 20 days of annual leave.");
+		UUID sessionId = chatService.createSession(List.of(only)).id();
+
+		documents.deleteById(only);
+
+		assertThat(chatService.getSession(sessionId).documentIds()).isEmpty();
+		ChatMessageDto answer = askAndWait(sessionId, "annual leave days").get(1);
+		assertThat(answer.content()).isEqualTo(GenerationService.NO_ANSWER);
+		assertThat(chatModel.calls.get()).isZero();
+	}
+
+	@Test
+	void cannotScopeAChatToAnotherUsersDocument() {
+		UUID aliceDoc = ingest(user("alice"), "alice.txt", "Alice's notes about annual leave.");
+
+		assertThatThrownBy(() -> chatService.createSession(List.of(aliceDoc)))
+				.isInstanceOf(com.company.chatdocs.exception.DocumentNotFoundException.class);
+		assertThat(sessions.count()).isZero();
+	}
+
+	@Test
 	void offTopicQuestionSkipsTheModel() {
 		ingest(user("demo"), "leave.txt", "Leave policy: employees get 24 days of annual leave.");
-		UUID sessionId = chatService.createSession().id();
+		UUID sessionId = chatService.createSession(List.of()).id();
 
 		ChatMessageDto answer = askAndWait(sessionId, "Explain quantum chromodynamics").get(1);
 
@@ -207,7 +246,7 @@ class ChatServiceTests {
 		ingest(user("demo"), "leave.txt", "Leave policy: employees get 24 days of annual leave.");
 		ingest(user("demo"), "leave-interns.txt", "Leave policy for interns: interns get 10 days of annual leave.");
 		chatModel.reply = "Interns get 10 days [2].";
-		UUID sessionId = chatService.createSession().id();
+		UUID sessionId = chatService.createSession(List.of()).id();
 
 		ChatMessageDto answer = askAndWait(sessionId, "annual leave policy days").get(1);
 
@@ -217,7 +256,7 @@ class ChatServiceTests {
 	@Test
 	void neverUsesAnotherUsersDocuments() {
 		ingest(user("alice"), "alice-leave.txt", "Leave policy: alice staff get 30 days of annual leave.");
-		UUID sessionId = chatService.createSession().id();
+		UUID sessionId = chatService.createSession(List.of()).id();
 
 		ChatMessageDto answer = askAndWait(sessionId, "How many days of annual leave?").get(1);
 
@@ -227,7 +266,7 @@ class ChatServiceTests {
 
 	@Test
 	void firstQuestionNamesTheChat() {
-		UUID sessionId = chatService.createSession().id();
+		UUID sessionId = chatService.createSession(List.of()).id();
 
 		askAndWait(sessionId, "What is the travel policy for international trips and conferences abroad?");
 		askAndWait(sessionId, "Second question");
@@ -238,7 +277,7 @@ class ChatServiceTests {
 
 	@Test
 	void createRenameAndDeleteSession() {
-		ChatSessionDto created = chatService.createSession();
+		ChatSessionDto created = chatService.createSession(List.of());
 		assertThat(created.title()).isEqualTo("New chat");
 
 		assertThat(chatService.renameSession(created.id(), "  Leave questions  ").title()).isEqualTo("Leave questions");
@@ -251,7 +290,7 @@ class ChatServiceTests {
 
 	@Test
 	void messagesArePersistedInOrder() {
-		UUID id = chatService.createSession().id();
+		UUID id = chatService.createSession(List.of()).id();
 
 		askAndWait(id, "First?");
 		askAndWait(id, "Second?");
@@ -264,7 +303,7 @@ class ChatServiceTests {
 
 	@Test
 	void rejectsBlankMessageAndTitle() {
-		UUID id = chatService.createSession().id();
+		UUID id = chatService.createSession(List.of()).id();
 
 		assertThatThrownBy(() -> chatService.ask(id, "   ")).isInstanceOf(InvalidInputException.class);
 		assertThatThrownBy(() -> chatService.renameSession(id, "")).isInstanceOf(InvalidInputException.class);
