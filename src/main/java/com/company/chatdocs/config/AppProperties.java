@@ -5,6 +5,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 import org.springframework.util.unit.DataSize;
 
 import java.nio.file.Path;
+import java.time.Duration;
 
 /**
  * App-specific settings from the {@code app.*} properties.
@@ -20,9 +21,14 @@ public record AppProperties(
 		@DefaultValue Ingestion ingestion) {
 
 	/**
-	 * @param chunkSize target chunk size in tokens
+	 * @param chunkSize           target chunk size in tokens
+	 * @param batchSize           chunks embedded per Gemini request
+	 * @param pauseBetweenBatches wait between batches to stay under the free-tier tokens-per-minute limit
 	 */
-	public record Ingestion(@DefaultValue("500") int chunkSize) {
+	public record Ingestion(
+			@DefaultValue("500") int chunkSize,
+			@DefaultValue("20") int batchSize,
+			@DefaultValue("20s") Duration pauseBetweenBatches) {
 	}
 
 }

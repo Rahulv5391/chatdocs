@@ -1,5 +1,6 @@
 package com.company.chatdocs.service;
 
+import com.company.chatdocs.FakeEmbeddingModelConfiguration;
 import com.company.chatdocs.TestcontainersConfiguration;
 import com.company.chatdocs.dto.DocumentDto;
 import com.company.chatdocs.entity.DocumentStatus;
@@ -19,8 +20,8 @@ import java.nio.file.Files;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-@Import(TestcontainersConfiguration.class)
-@SpringBootTest(properties = "app.storage-dir=target/test-uploads")
+@Import({ TestcontainersConfiguration.class, FakeEmbeddingModelConfiguration.class })
+@SpringBootTest(properties = { "app.storage-dir=target/test-uploads", "app.ingestion.pause-between-batches=0s" })
 @ActiveProfiles("dev")
 @WithMockUser(username = "demo")
 class DocumentUploadTests {

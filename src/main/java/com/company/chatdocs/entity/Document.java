@@ -12,6 +12,7 @@ import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 
 import java.time.Instant;
+import java.util.UUID;
 
 @Entity
 @Table(name = "document")
@@ -20,6 +21,10 @@ public class Document extends BaseEntity {
 	@ManyToOne(fetch = FetchType.LAZY, optional = false)
 	@JoinColumn(name = "owner_id", nullable = false, updatable = false)
 	private AppUser owner;
+
+	/** Same column as {@link #owner}, read-only, so the id is available without loading the lazy owner. */
+	@Column(name = "owner_id", insertable = false, updatable = false)
+	private UUID ownerId;
 
 	@Column(name = "file_name", nullable = false)
 	private String fileName;
@@ -70,6 +75,10 @@ public class Document extends BaseEntity {
 
 	public AppUser getOwner() {
 		return owner;
+	}
+
+	public UUID getOwnerId() {
+		return ownerId;
 	}
 
 	public String getFileName() {
