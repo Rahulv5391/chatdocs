@@ -4,12 +4,14 @@ import com.company.chatdocs.config.AppProperties;
 import com.company.chatdocs.dto.DocumentDto;
 import com.company.chatdocs.entity.AppUser;
 import com.company.chatdocs.entity.Document;
+import com.company.chatdocs.event.DocumentUploadedEvent;
 import com.company.chatdocs.exception.DocumentNotFoundException;
 import com.company.chatdocs.exception.UploadRejectedException;
 import com.company.chatdocs.repository.DocumentRepository;
 import com.vaadin.hilla.BrowserCallable;
 import jakarta.annotation.security.PermitAll;
 import org.jspecify.annotations.NonNull;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
@@ -39,13 +41,15 @@ public class DocumentService {
 	private final CurrentUser currentUser;
 	private final FileStorageService storage;
 	private final AppProperties properties;
+	private final ApplicationEventPublisher events;
 
 	DocumentService(DocumentRepository documents, CurrentUser currentUser, FileStorageService storage,
-			AppProperties properties) {
+			AppProperties properties, ApplicationEventPublisher events) {
 		this.documents = documents;
 		this.currentUser = currentUser;
 		this.storage = storage;
 		this.properties = properties;
+		this.events = events;
 	}
 
 	/** Returns only the logged-in user's documents, newest first. */
@@ -58,6 +62,7 @@ public class DocumentService {
 
 	/**
 	 * Validates the file, saves it to disk and creates a document row with status UPLOADED.
+	 * Ingestion then runs in the background.
 	 *
 	 * @throws UploadRejectedException with a user-friendly message if the file is not accepted
 	 */
@@ -88,6 +93,8 @@ public class DocumentService {
 		try {
 			Document document = documents.saveAndFlush(new Document(owner, fileName, ALLOWED_TYPES.get(extension),
 					content.length, storagePath, checksum));
+			// IngestionService picks this up after the transaction commits.
+			events.publishEvent(new DocumentUploadedEvent(document.getId()));
 			return DocumentDto.from(document);
 		}
 		catch (RuntimeException e) {

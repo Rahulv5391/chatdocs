@@ -1,0 +1,122 @@
+package com.company.chatdocs.service;
+
+import com.company.chatdocs.TestcontainersConfiguration;
+import com.company.chatdocs.entity.Document;
+import com.company.chatdocs.entity.DocumentStatus;
+import com.company.chatdocs.repository.DocumentRepository;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.test.context.ActiveProfiles;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.util.List;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.fail;
+
+/** Uploads real files and waits for the background ingestion (after commit, on another thread) to finish. */
+@Import(TestcontainersConfiguration.class)
+@SpringBootTest(properties = "app.storage-dir=target/test-uploads")
+@ActiveProfiles("dev")
+@WithMockUser(username = "demo")
+class IngestionServiceTests {
+
+	@Autowired
+	DocumentService documentService;
+
+	@Autowired
+	DocumentRepository documents;
+
+	@Autowired
+	FileStorageService storage;
+
+	@AfterEach
+	void cleanUp() {
+		documents.findAll().forEach(document -> storage.delete(document.getStoragePath()));
+		documents.deleteAll();
+	}
+
+	@Test
+	void pdfWithTextBecomesReadyWithChunks() throws Exception {
+		byte[] pdf = pdf(List.of(
+				"Leave policy. Every employee gets 24 days of paid annual leave per year.",
+				"Travel policy. Book flights at least two weeks in advance."));
+
+		Document document = uploadAndWait("policies.pdf", "application/pdf", pdf);
+
+		assertThat(document.getStatus()).isEqualTo(DocumentStatus.READY);
+		assertThat(document.getChunkCount()).isGreaterThanOrEqualTo(2);
+		assertThat(document.getErrorMessage()).isNull();
+	}
+
+	@Test
+	void textFileBecomesReady() throws Exception {
+		Document document = uploadAndWait("notes.txt", "text/plain",
+				"Meeting notes: the demo is on Friday and everyone should bring questions.".getBytes());
+
+		assertThat(document.getStatus()).isEqualTo(DocumentStatus.READY);
+		assertThat(document.getChunkCount()).isEqualTo(1);
+	}
+
+	@Test
+	void corruptPdfFailsWithReason() throws Exception {
+		Document document = uploadAndWait("broken.pdf", "application/pdf", "%PDF-1.4 this is not a pdf".getBytes());
+
+		assertThat(document.getStatus()).isEqualTo(DocumentStatus.FAILED);
+		assertThat(document.getErrorMessage()).startsWith("Could not read the file");
+	}
+
+	@Test
+	void pdfWithoutTextFailsWithNoExtractableText() throws Exception {
+		Document document = uploadAndWait("scan.pdf", "application/pdf", pdf(List.of("")));
+
+		assertThat(document.getStatus()).isEqualTo(DocumentStatus.FAILED);
+		assertThat(document.getErrorMessage()).startsWith("No extractable text");
+	}
+
+	private Document uploadAndWait(String name, String contentType, byte[] content) throws InterruptedException {
+		UUID id = documentService.upload(new MockMultipartFile("file", name, contentType, content)).id();
+		for (int i = 0; i < 150; i++) {
+			Document document = documents.findById(id).orElseThrow();
+			if (document.getStatus() == DocumentStatus.READY || document.getStatus() == DocumentStatus.FAILED) {
+				return document;
+			}
+			Thread.sleep(100);
+		}
+		return fail("Ingestion did not finish within 15 seconds");
+	}
+
+	/** Builds a PDF with one page per string (an empty string gives a blank page). */
+	private static byte[] pdf(List<String> pages) throws IOException {
+		try (PDDocument pdf = new PDDocument(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+			for (String text : pages) {
+				PDPage page = new PDPage();
+				pdf.addPage(page);
+				if (!text.isEmpty()) {
+					try (PDPageContentStream stream = new PDPageContentStream(pdf, page)) {
+						stream.beginText();
+						stream.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 12);
+						stream.newLineAtOffset(50, 700);
+						stream.showText(text);
+						stream.endText();
+					}
+				}
+			}
+			pdf.save(out);
+			return out.toByteArray();
+		}
+	}
+
+}

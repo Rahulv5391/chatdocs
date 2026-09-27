@@ -11,9 +11,18 @@ import java.nio.file.Path;
  *
  * @param storageDir    folder where uploaded files are saved
  * @param maxUploadSize largest file a user may upload
+ * @param ingestion     how uploaded files are split into chunks
  */
 @ConfigurationProperties("app")
 public record AppProperties(
 		@DefaultValue("./data/uploads") Path storageDir,
-		@DefaultValue("20MB") DataSize maxUploadSize) {
+		@DefaultValue("20MB") DataSize maxUploadSize,
+		@DefaultValue Ingestion ingestion) {
+
+	/**
+	 * @param chunkSize target chunk size in tokens
+	 */
+	public record Ingestion(@DefaultValue("500") int chunkSize) {
+	}
+
 }

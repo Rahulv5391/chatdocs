@@ -12,6 +12,8 @@ import {
 } from '@vaadin/react-components';
 import { DocumentService } from 'Frontend/generated/endpoints';
 import type DocumentDto from 'Frontend/generated/com/company/chatdocs/dto/DocumentDto';
+import DocumentStatus from 'Frontend/generated/com/company/chatdocs/entity/DocumentStatus';
+import StatusBadge from 'Frontend/components/StatusBadge';
 
 export const config: ViewConfig = {
   title: 'Documents',
@@ -19,6 +21,17 @@ export const config: ViewConfig = {
 };
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
+const POLL_INTERVAL_MS = 3000;
+
+function isInProgress(document: DocumentDto) {
+  return document.status === DocumentStatus.UPLOADED || document.status === DocumentStatus.PROCESSING;
+}
+
+function details(document: DocumentDto) {
+  if (document.status === DocumentStatus.READY) return `${document.chunkCount} chunks`;
+  if (document.status === DocumentStatus.FAILED) return document.errorMessage ?? 'Unknown error';
+  return '';
+}
 
 function formatSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -39,6 +52,14 @@ export default function DocumentsView() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Ingestion runs in the background, so poll while any document is still queued or processing.
+  const polling = documents.some(isInProgress);
+  useEffect(() => {
+    if (!polling) return;
+    const timer = setInterval(refresh, POLL_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [polling, refresh]);
 
   // Send the file through the generated Hilla client instead of the Upload component's own XHR.
   async function handleUploadRequest(event: UploadRequestEvent) {
@@ -89,7 +110,19 @@ export default function DocumentsView() {
         <GridColumn header="Uploaded" autoWidth>
           {({ item }: { item: DocumentDto }) => new Date(item.createdAt).toLocaleString()}
         </GridColumn>
-        <GridColumn path="status" header="Status" autoWidth />
+        <GridColumn header="Status" autoWidth>
+          {({ item }: { item: DocumentDto }) => <StatusBadge status={item.status} />}
+        </GridColumn>
+        <GridColumn header="Details" flexGrow={2}>
+          {({ item }: { item: DocumentDto }) => (
+            <span
+              title={details(item)}
+              style={{ color: item.status === DocumentStatus.FAILED ? '#b91c1c' : undefined }}
+            >
+              {details(item)}
+            </span>
+          )}
+        </GridColumn>
         <GridColumn autoWidth flexGrow={0}>
           {({ item }: { item: DocumentDto }) => (
             <Button theme="error tertiary small" onClick={() => setToDelete(item)}>
