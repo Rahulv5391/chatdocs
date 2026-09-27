@@ -13,12 +13,23 @@ import java.time.Duration;
  * @param storageDir    folder where uploaded files are saved
  * @param maxUploadSize largest file a user may upload
  * @param ingestion     how uploaded files are split into chunks
+ * @param rag           how chunks are retrieved for a question
  */
 @ConfigurationProperties("app")
 public record AppProperties(
 		@DefaultValue("./data/uploads") Path storageDir,
 		@DefaultValue("20MB") DataSize maxUploadSize,
-		@DefaultValue Ingestion ingestion) {
+		@DefaultValue Ingestion ingestion,
+		@DefaultValue Rag rag) {
+
+	/**
+	 * @param topK                how many chunks to retrieve per question
+	 * @param similarityThreshold minimum cosine similarity (0..1) for a chunk to count as relevant
+	 */
+	public record Rag(
+			@DefaultValue("5") int topK,
+			@DefaultValue("0.55") double similarityThreshold) {
+	}
 
 	/**
 	 * @param chunkSize           target chunk size in tokens
