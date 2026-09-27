@@ -1,24 +1,49 @@
 package com.company.chatdocs.service;
 
+import com.company.chatdocs.config.AppProperties;
 import com.company.chatdocs.dto.DocumentDto;
+import com.company.chatdocs.entity.AppUser;
+import com.company.chatdocs.entity.Document;
+import com.company.chatdocs.exception.UploadRejectedException;
 import com.company.chatdocs.repository.DocumentRepository;
 import com.vaadin.hilla.BrowserCallable;
 import jakarta.annotation.security.PermitAll;
 import org.jspecify.annotations.NonNull;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 @BrowserCallable
 @PermitAll
 public class DocumentService {
 
+	/** Allowed file extensions and the content type we store for each. */
+	private static final Map<String, String> ALLOWED_TYPES = Map.of(
+			"pdf", "application/pdf",
+			"docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+			"txt", "text/plain",
+			"md", "text/markdown");
+
 	private final DocumentRepository documents;
 	private final CurrentUser currentUser;
+	private final FileStorageService storage;
+	private final AppProperties properties;
 
-	DocumentService(DocumentRepository documents, CurrentUser currentUser) {
+	DocumentService(DocumentRepository documents, CurrentUser currentUser, FileStorageService storage,
+			AppProperties properties) {
 		this.documents = documents;
 		this.currentUser = currentUser;
+		this.storage = storage;
+		this.properties = properties;
 	}
 
 	/** Returns only the logged-in user's documents, newest first. */
@@ -27,6 +52,65 @@ public class DocumentService {
 		return documents.findByOwnerIdOrderByCreatedAtDesc(currentUser.get().getId()).stream()
 				.map(DocumentDto::from)
 				.toList();
+	}
+
+	/**
+	 * Validates the file, saves it to disk and creates a document row with status UPLOADED.
+	 *
+	 * @throws UploadRejectedException with a user-friendly message if the file is not accepted
+	 */
+	@Transactional
+	public @NonNull DocumentDto upload(@NonNull MultipartFile file) {
+		String fileName = StringUtils.getFilename(StringUtils.cleanPath(String.valueOf(file.getOriginalFilename())));
+		String extension = String.valueOf(StringUtils.getFilenameExtension(fileName)).toLowerCase(Locale.ROOT);
+
+		if (!ALLOWED_TYPES.containsKey(extension)) {
+			throw new UploadRejectedException("Only PDF, DOCX, TXT and MD files are supported.");
+		}
+		if (file.isEmpty()) {
+			throw new UploadRejectedException("The file is empty.");
+		}
+		if (file.getSize() > properties.maxUploadSize().toBytes()) {
+			throw new UploadRejectedException(
+					"The file is too large. The limit is " + properties.maxUploadSize().toMegabytes() + " MB.");
+		}
+
+		byte[] content = readBytes(file);
+		String checksum = sha256(content);
+		AppUser owner = currentUser.get();
+		if (documents.existsByOwnerIdAndChecksumSha256(owner.getId(), checksum)) {
+			throw new UploadRejectedException("You have already uploaded this file.");
+		}
+
+		String storagePath = storage.save(owner.getId(), extension, content);
+		try {
+			Document document = documents.saveAndFlush(new Document(owner, fileName, ALLOWED_TYPES.get(extension),
+					content.length, storagePath, checksum));
+			return DocumentDto.from(document);
+		}
+		catch (RuntimeException e) {
+			// Don't leave a file on disk without a matching row.
+			storage.delete(storagePath);
+			throw e;
+		}
+	}
+
+	private static byte[] readBytes(MultipartFile file) {
+		try {
+			return file.getBytes();
+		}
+		catch (IOException e) {
+			throw new UncheckedIOException("Could not read the uploaded file", e);
+		}
+	}
+
+	private static String sha256(byte[] content) {
+		try {
+			return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(content));
+		}
+		catch (NoSuchAlgorithmException e) {
+			throw new IllegalStateException("SHA-256 is not available", e);
+		}
 	}
 
 }

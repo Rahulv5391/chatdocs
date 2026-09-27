@@ -10,4 +10,6 @@ public interface DocumentRepository extends JpaRepository<Document, UUID> {
 
 	List<Document> findByOwnerIdOrderByCreatedAtDesc(UUID ownerId);
 
+	boolean existsByOwnerIdAndChecksumSha256(UUID ownerId, String checksumSha256);
+
 }

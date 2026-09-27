@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ViewConfig } from '@vaadin/hilla-file-router/types.js';
-import { Grid, GridColumn } from '@vaadin/react-components';
+import { EndpointError } from '@vaadin/hilla-frontend';
+import { Grid, GridColumn, Notification, Upload, type UploadRequestEvent } from '@vaadin/react-components';
 import { DocumentService } from 'Frontend/generated/endpoints';
 import type DocumentDto from 'Frontend/generated/com/company/chatdocs/dto/DocumentDto';
 
@@ -9,21 +10,54 @@ export const config: ViewConfig = {
   menu: { order: 1 },
 };
 
+const MAX_FILE_SIZE = 20 * 1024 * 1024;
+
 function formatSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function showError(message: string) {
+  Notification.show(message, { theme: 'error', position: 'bottom-end', duration: 5000 });
+}
+
 export default function DocumentsView() {
   const [documents, setDocuments] = useState<DocumentDto[]>([]);
 
+  const refresh = useCallback(() => DocumentService.list().then(setDocuments), []);
+
   useEffect(() => {
-    DocumentService.list().then(setDocuments);
-  }, []);
+    refresh();
+  }, [refresh]);
+
+  // Send the file through the generated Hilla client instead of the Upload component's own XHR.
+  async function handleUploadRequest(event: UploadRequestEvent) {
+    event.preventDefault();
+    const upload = event.target;
+    const file = event.detail.file;
+    try {
+      await DocumentService.upload(file);
+      file.complete = true;
+      await refresh();
+    } catch (e) {
+      file.error = e instanceof EndpointError ? e.message : 'Upload failed.';
+      showError(`${file.name}: ${file.error}`);
+    } finally {
+      file.uploading = false;
+      file.status = '';
+      upload.files = [...upload.files];
+    }
+  }
 
   return (
-    <main style={{ padding: '1rem', height: '100%', boxSizing: 'border-box' }}>
+    <main style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+      <Upload
+        accept=".pdf,.docx,.txt,.md"
+        maxFileSize={MAX_FILE_SIZE}
+        onUploadRequest={handleUploadRequest}
+        onFileReject={(e) => showError(`${e.detail.file.name}: ${e.detail.error}`)}
+      />
       <Grid items={documents} allRowsVisible={documents.length < 20}>
         <GridColumn path="fileName" header="Name" flexGrow={3} />
         <GridColumn header="Size" autoWidth>
