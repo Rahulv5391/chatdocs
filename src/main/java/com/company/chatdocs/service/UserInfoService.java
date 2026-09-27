@@ -1,10 +1,9 @@
-package com.company.chatdocs.security;
+package com.company.chatdocs.service;
 
-import com.company.chatdocs.user.AppUserRepository;
+import com.company.chatdocs.dto.UserInfo;
 import com.vaadin.hilla.BrowserCallable;
 import jakarta.annotation.security.PermitAll;
 import org.jspecify.annotations.NonNull;
-import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.util.List;
 
@@ -15,15 +14,14 @@ import java.util.List;
 @PermitAll
 public class UserInfoService {
 
-	private final AppUserRepository users;
+	private final CurrentUser currentUser;
 
-	UserInfoService(AppUserRepository users) {
-		this.users = users;
+	UserInfoService(CurrentUser currentUser) {
+		this.currentUser = currentUser;
 	}
 
 	public @NonNull UserInfo getUserInfo() {
-		String username = SecurityContextHolder.getContext().getAuthentication().getName();
-		var user = users.findByUsername(username).orElseThrow();
+		var user = currentUser.get();
 		return new UserInfo(user.getUsername(), user.getDisplayName(), List.of(user.getRole().name()));
 	}
 

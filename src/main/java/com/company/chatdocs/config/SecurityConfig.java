@@ -1,4 +1,4 @@
-package com.company.chatdocs.security;
+package com.company.chatdocs.config;
 
 import com.vaadin.flow.spring.security.VaadinAwareSecurityContextHolderStrategyConfiguration;
 import com.vaadin.flow.spring.security.VaadinSecurityConfigurer;

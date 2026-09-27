@@ -1,6 +1,6 @@
-package com.company.chatdocs.security;
+package com.company.chatdocs.service;
 
-import com.company.chatdocs.user.AppUserRepository;
+import com.company.chatdocs.repository.AppUserRepository;
 import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;

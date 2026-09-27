@@ -1,4 +1,4 @@
-package com.company.chatdocs.security;
+package com.company.chatdocs.service;
 
 import com.company.chatdocs.TestcontainersConfiguration;
 import org.junit.jupiter.api.Test;

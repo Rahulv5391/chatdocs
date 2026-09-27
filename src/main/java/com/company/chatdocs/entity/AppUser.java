@@ -1,6 +1,5 @@
-package com.company.chatdocs.user;
+package com.company.chatdocs.entity;
 
-import com.company.chatdocs.common.BaseEntity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;

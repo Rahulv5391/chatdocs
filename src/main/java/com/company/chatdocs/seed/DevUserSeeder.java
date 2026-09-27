@@ -1,4 +1,7 @@
-package com.company.chatdocs.user;
+package com.company.chatdocs.seed;
+
+import com.company.chatdocs.entity.AppUser;
+import com.company.chatdocs.repository.AppUserRepository;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

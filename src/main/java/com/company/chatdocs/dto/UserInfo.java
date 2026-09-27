@@ -1,4 +1,4 @@
-package com.company.chatdocs.security;
+package com.company.chatdocs.dto;
 
 import org.jspecify.annotations.NonNull;
 

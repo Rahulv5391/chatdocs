@@ -1,6 +1,8 @@
-package com.company.chatdocs.user;
+package com.company.chatdocs.seed;
 
 import com.company.chatdocs.TestcontainersConfiguration;
+import com.company.chatdocs.entity.AppUser;
+import com.company.chatdocs.repository.AppUserRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;

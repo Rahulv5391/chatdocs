@@ -1,4 +1,6 @@
-package com.company.chatdocs.user;
+package com.company.chatdocs.repository;
+
+import com.company.chatdocs.entity.AppUser;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 

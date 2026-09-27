@@ -1,4 +1,4 @@
-package com.company.chatdocs.common;
+package com.company.chatdocs.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.GeneratedValue;
