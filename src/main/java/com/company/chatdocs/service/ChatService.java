@@ -2,6 +2,7 @@ package com.company.chatdocs.service;
 
 import com.company.chatdocs.dto.ChatMessageDto;
 import com.company.chatdocs.dto.ChatSessionDto;
+import com.company.chatdocs.dto.Citation;
 import com.company.chatdocs.entity.ChatMessage;
 import com.company.chatdocs.entity.ChatSession;
 import com.company.chatdocs.entity.MessageRole;
@@ -12,14 +13,18 @@ import com.company.chatdocs.repository.ChatSessionRepository;
 import com.vaadin.hilla.BrowserCallable;
 import jakarta.annotation.security.PermitAll;
 import org.jspecify.annotations.NonNull;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.util.List;
 import java.util.UUID;
 
 /**
  * Chat sessions and their messages. Every method only sees the logged-in user's sessions.
- * Phase 14 has no AI yet: sending a message stores it and a placeholder reply.
+ * {@link #ask} runs the RAG flow: save question → retrieve → generate → save answer with citations.
  */
 @BrowserCallable
 @PermitAll
@@ -27,16 +32,29 @@ public class ChatService {
 
 	static final int MAX_TITLE_LENGTH = 200;
 
-	static final String PLACEHOLDER_REPLY = "(AI coming soon)";
+	private static final int AUTO_TITLE_LENGTH = 60;
+
+	private static final TypeReference<List<Citation>> CITATION_LIST = new TypeReference<>() {
+	};
 
 	private final ChatSessionRepository sessions;
 	private final ChatMessageRepository messages;
 	private final CurrentUser currentUser;
+	private final RetrievalService retrieval;
+	private final GenerationService generation;
+	private final JsonMapper json;
+	private final TransactionTemplate transaction;
 
-	ChatService(ChatSessionRepository sessions, ChatMessageRepository messages, CurrentUser currentUser) {
+	ChatService(ChatSessionRepository sessions, ChatMessageRepository messages, CurrentUser currentUser,
+			RetrievalService retrieval, GenerationService generation, JsonMapper json,
+			PlatformTransactionManager transactionManager) {
 		this.sessions = sessions;
 		this.messages = messages;
 		this.currentUser = currentUser;
+		this.retrieval = retrieval;
+		this.generation = generation;
+		this.json = json;
+		this.transaction = new TransactionTemplate(transactionManager);
 	}
 
 	/** The user's chats, most recently used first. */
@@ -81,26 +99,61 @@ public class ChatService {
 	@Transactional(readOnly = true)
 	public @NonNull List<@NonNull ChatMessageDto> getMessages(@NonNull UUID sessionId) {
 		ownSession(sessionId);
-		return messages.findBySessionIdOrderBySeqAsc(sessionId).stream().map(ChatMessageDto::from).toList();
+		return messages.findBySessionIdOrderBySeqAsc(sessionId).stream().map(this::toDto).toList();
 	}
 
-	/** Saves the user's message and a placeholder reply, and returns both. */
-	@Transactional
-	public @NonNull List<@NonNull ChatMessageDto> sendMessage(@NonNull UUID sessionId, @NonNull String content) {
-		String question = content.strip();
-		if (question.isEmpty()) {
+	/**
+	 * Answers a question from the user's documents and returns the saved question and answer.
+	 * Not one big transaction: the slow Gemini call happens between two short ones, so no database
+	 * connection is held while waiting for the model.
+	 */
+	public @NonNull List<@NonNull ChatMessageDto> ask(@NonNull UUID sessionId, @NonNull String question) {
+		String text = question.strip();
+		if (text.isEmpty()) {
 			throw new InvalidInputException("The message can't be empty.");
 		}
-		ChatSession session = ownSession(sessionId);
-		ChatMessage userMessage = messages.save(new ChatMessage(session, MessageRole.USER, question));
-		ChatMessage reply = messages.save(new ChatMessage(session, MessageRole.ASSISTANT, PLACEHOLDER_REPLY));
-		session.touch();
-		return List.of(ChatMessageDto.from(userMessage), ChatMessageDto.from(reply));
+		UUID userId = currentUser.get().getId();
+
+		ChatMessage userMessage = transaction.execute(status -> {
+			ChatSession session = ownSession(sessionId);
+			if (ChatSession.DEFAULT_TITLE.equals(session.getTitle())
+					&& messages.findBySessionIdOrderBySeqAsc(sessionId).isEmpty()) {
+				session.rename(autoTitle(text));
+			}
+			session.touch();
+			return messages.save(new ChatMessage(session, MessageRole.USER, text));
+		});
+
+		var chunks = retrieval.search(userId, text, List.of());
+		GenerationService.Answer answer = generation.answer(text, chunks);
+
+		ChatMessage reply = transaction.execute(status -> {
+			ChatSession session = ownSession(sessionId);
+			session.touch();
+			return messages.save(new ChatMessage(session, MessageRole.ASSISTANT, answer.text(),
+					json.writeValueAsString(answer.citations())));
+		});
+
+		return List.of(toDto(userMessage), toDto(reply));
 	}
 
 	private ChatSession ownSession(UUID sessionId) {
 		return sessions.findByIdAndOwnerId(sessionId, currentUser.get().getId())
 				.orElseThrow(ChatSessionNotFoundException::new);
+	}
+
+	private ChatMessageDto toDto(ChatMessage message) {
+		List<Citation> citations = message.getCitationsJson() == null
+				? List.of()
+				: json.readValue(message.getCitationsJson(), CITATION_LIST);
+		return new ChatMessageDto(message.getId(), message.getRole(), message.getContent(), message.getCreatedAt(),
+				citations);
+	}
+
+	private static String autoTitle(String question) {
+		String singleLine = question.replaceAll("\\s+", " ");
+		return singleLine.length() <= AUTO_TITLE_LENGTH ? singleLine
+				: singleLine.substring(0, AUTO_TITLE_LENGTH - 1).strip() + "…";
 	}
 
 }

@@ -24,7 +24,7 @@ export default function ChatSessionView() {
   const { state } = useAuth();
   const [title, setTitle] = useState('');
   const [messages, setMessages] = useState<ChatMessageDto[]>([]);
-  const [sending, setSending] = useState(false);
+  const [pendingQuestion, setPendingQuestion] = useState<string>();
 
   useEffect(() => {
     Promise.all([ChatService.getSession(sessionId), ChatService.getMessages(sessionId)])
@@ -47,24 +47,34 @@ export default function ChatSessionView() {
     }
   }
 
-  async function send(text: string) {
-    setSending(true);
+  async function ask(question: string) {
+    setPendingQuestion(question);
     try {
-      const saved = await ChatService.sendMessage(sessionId, text);
+      const saved = await ChatService.ask(sessionId, question);
       setMessages((current) => [...current, ...saved]);
+      // The first question also names the chat.
+      setTitle((await ChatService.getSession(sessionId)).title);
     } catch (e) {
-      showError(e, 'Could not send the message.');
+      showError(e, 'Could not get an answer.');
     } finally {
-      setSending(false);
+      setPendingQuestion(undefined);
     }
   }
 
+  const userName = state.user?.displayName ?? 'You';
   const items = messages.map((message) => ({
     text: message.content,
     time: new Date(message.createdAt).toLocaleTimeString(),
-    userName: message.role === MessageRole.USER ? (state.user?.displayName ?? 'You') : 'Assistant',
+    userName: message.role === MessageRole.USER ? userName : 'Assistant',
     userColorIndex: message.role === MessageRole.USER ? 1 : 3,
   }));
+  // Show the question right away, with a placeholder answer, while Gemini is working.
+  if (pendingQuestion) {
+    items.push(
+      { text: pendingQuestion, time: '', userName, userColorIndex: 1 },
+      { text: '_Thinking…_', time: '', userName: 'Assistant', userColorIndex: 3 },
+    );
+  }
 
   return (
     <main style={{ display: 'flex', flexDirection: 'column', height: '100%', boxSizing: 'border-box', padding: '1rem' }}>
@@ -79,9 +89,9 @@ export default function ChatSessionView() {
           onChange={(e) => rename(e.target.value)}
         />
       </div>
-      <MessageList items={items} style={{ flexGrow: 1, overflow: 'auto' }} />
-      {messages.length === 0 && <p>Ask a question about your documents.</p>}
-      <MessageInput disabled={sending} onSubmit={(e) => send(e.detail.value)} />
+      <MessageList items={items} markdown style={{ flexGrow: 1, overflow: 'auto' }} />
+      {items.length === 0 && <p>Ask a question about your documents.</p>}
+      <MessageInput disabled={!!pendingQuestion} onSubmit={(e) => ask(e.detail.value)} />
     </main>
   );
 }

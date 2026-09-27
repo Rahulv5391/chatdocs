@@ -8,6 +8,8 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /** One message in a chat session: the many side of session 1──* message. */
 @Entity
@@ -29,13 +31,23 @@ public class ChatMessage extends BaseEntity {
 	@Column(nullable = false)
 	private String content;
 
+	/** JSON array of citations (jsonb). ChatService converts it to and from {@code List<Citation>}. */
+	@JdbcTypeCode(SqlTypes.JSON)
+	@Column(name = "citations")
+	private String citationsJson;
+
 	protected ChatMessage() {
 	}
 
 	public ChatMessage(ChatSession session, MessageRole role, String content) {
+		this(session, role, content, null);
+	}
+
+	public ChatMessage(ChatSession session, MessageRole role, String content, String citationsJson) {
 		this.session = session;
 		this.role = role;
 		this.content = content;
+		this.citationsJson = citationsJson;
 	}
 
 	public MessageRole getRole() {
@@ -44,6 +56,10 @@ public class ChatMessage extends BaseEntity {
 
 	public String getContent() {
 		return content;
+	}
+
+	public String getCitationsJson() {
+		return citationsJson;
 	}
 
 }
