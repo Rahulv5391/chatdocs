@@ -33,4 +33,15 @@ public interface DocumentRepository extends JpaRepository<Document, UUID> {
 			where d.id = :id""")
 	int updateStatus(UUID id, DocumentStatus status, int chunkCount, @Nullable String errorMessage, Instant now);
 
+	/** Marks every queued or processing document as FAILED. Used at startup, when no ingestion can be running. */
+	@Transactional
+	@Modifying
+	@Query("""
+			update Document d
+			set d.status = com.company.chatdocs.entity.DocumentStatus.FAILED, d.chunkCount = 0,
+			    d.errorMessage = :errorMessage, d.updatedAt = :now
+			where d.status in (com.company.chatdocs.entity.DocumentStatus.UPLOADED,
+			                   com.company.chatdocs.entity.DocumentStatus.PROCESSING)""")
+	int failUnfinished(String errorMessage, Instant now);
+
 }

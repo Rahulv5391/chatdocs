@@ -80,6 +80,16 @@ export default function DocumentsView() {
     }
   }
 
+  async function reprocess(document: DocumentDto) {
+    try {
+      await DocumentService.reprocess(document.id);
+    } catch (e) {
+      showError(e instanceof EndpointError ? e.message : 'Reprocess failed.');
+    } finally {
+      await refresh();
+    }
+  }
+
   async function confirmDelete() {
     if (!toDelete) return;
     const doc = toDelete;
@@ -125,9 +135,16 @@ export default function DocumentsView() {
         </GridColumn>
         <GridColumn autoWidth flexGrow={0}>
           {({ item }: { item: DocumentDto }) => (
-            <Button theme="error tertiary small" onClick={() => setToDelete(item)}>
-              Delete
-            </Button>
+            <div style={{ display: 'flex', gap: '0.25rem' }}>
+              {item.status === DocumentStatus.FAILED && (
+                <Button theme="tertiary small" onClick={() => reprocess(item)}>
+                  Reprocess
+                </Button>
+              )}
+              <Button theme="error tertiary small" onClick={() => setToDelete(item)}>
+                Delete
+              </Button>
+            </div>
           )}
         </GridColumn>
       </Grid>

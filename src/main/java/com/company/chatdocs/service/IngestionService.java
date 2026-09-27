@@ -10,6 +10,8 @@ import org.springframework.ai.document.Document;
 import org.springframework.ai.reader.pdf.PagePdfDocumentReader;
 import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.core.NestedExceptionUtils;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -54,6 +56,24 @@ public class IngestionService {
 		ingest(event.documentId());
 	}
 
+	/**
+	 * Ingestion runs inside this app, so after a restart nothing is still working on UPLOADED or PROCESSING rows.
+	 * Mark them FAILED so the user sees what happened and can press Reprocess.
+	 */
+	@EventListener(ApplicationReadyEvent.class)
+	public void failInterruptedDocuments() {
+		int count = documents.failUnfinished("Processing was interrupted by a restart. Click Reprocess to try again.",
+				Instant.now());
+		if (count > 0) {
+			log.warn("Marked {} interrupted document(s) as FAILED", count);
+		}
+	}
+
+	/** Removes all stored chunks of a document. Safe to call when there are none. */
+	public void deleteChunks(UUID documentId) {
+		vectorStore.delete("document_id == '" + documentId + "'");
+	}
+
 	/** Processes one document, recording READY with the chunk count, or FAILED with a readable reason. */
 	public void ingest(UUID documentId) {
 		var document = documents.findById(documentId).orElse(null);
@@ -62,6 +82,8 @@ public class IngestionService {
 			return;
 		}
 		documents.updateStatus(documentId, DocumentStatus.PROCESSING, 0, null, Instant.now());
+		// Idempotent: a reprocessed document never ends up with old and new chunks side by side.
+		deleteChunks(documentId);
 
 		try {
 			List<Document> chunks = withMetadata(document, splitter.apply(read(document)));
@@ -120,7 +142,7 @@ public class IngestionService {
 		}
 		catch (RuntimeException e) {
 			// Don't leave half a document searchable.
-			vectorStore.delete("document_id == '" + documentId + "'");
+			deleteChunks(documentId);
 			String reason = EmbeddingThrottler.isRateLimited(e)
 					? "Gemini quota exceeded. Try again later."
 					: "Could not create embeddings: " + rootMessage(e);

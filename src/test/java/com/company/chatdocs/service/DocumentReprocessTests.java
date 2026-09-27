@@ -1,0 +1,143 @@
+package com.company.chatdocs.service;
+
+import com.company.chatdocs.FakeEmbeddingModelConfiguration;
+import com.company.chatdocs.TestcontainersConfiguration;
+import com.company.chatdocs.entity.Document;
+import com.company.chatdocs.entity.DocumentStatus;
+import com.company.chatdocs.exception.DocumentNotFoundException;
+import com.company.chatdocs.exception.InvalidDocumentStateException;
+import com.company.chatdocs.repository.AppUserRepository;
+import com.company.chatdocs.repository.DocumentRepository;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.test.context.ActiveProfiles;
+
+import java.time.Instant;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.fail;
+
+@Import({ TestcontainersConfiguration.class, FakeEmbeddingModelConfiguration.class })
+@SpringBootTest(properties = { "app.storage-dir=target/test-uploads", "app.ingestion.pause-between-batches=0s" })
+@ActiveProfiles("dev")
+@WithMockUser(username = "demo")
+class DocumentReprocessTests {
+
+	private static final String TEXT = "Onboarding guide. New employees receive a laptop on day one. ".repeat(80);
+
+	@Autowired
+	DocumentService documentService;
+
+	@Autowired
+	IngestionService ingestionService;
+
+	@Autowired
+	DocumentRepository documents;
+
+	@Autowired
+	AppUserRepository users;
+
+	@Autowired
+	FileStorageService storage;
+
+	@Autowired
+	JdbcTemplate jdbc;
+
+	@AfterEach
+	void cleanUp() {
+		documents.findAll().forEach(document -> storage.delete(document.getStoragePath()));
+		documents.deleteAll();
+		jdbc.update("delete from vector_store");
+	}
+
+	@Test
+	void deleteAlsoRemovesChunks() throws Exception {
+		UUID id = uploadAndWaitForReady("guide.txt");
+		assertThat(chunkRows(id)).isPositive();
+
+		documentService.delete(id);
+
+		assertThat(chunkRows(id)).isZero();
+	}
+
+	@Test
+	void reprocessRebuildsChunksWithoutDuplicates() throws Exception {
+		UUID id = uploadAndWaitForReady("guide.txt");
+		int chunkCount = documents.findById(id).orElseThrow().getChunkCount();
+		documents.updateStatus(id, DocumentStatus.FAILED, 0, "Simulated failure", Instant.now());
+
+		assertThat(documentService.reprocess(id).status()).isEqualTo(DocumentStatus.UPLOADED);
+		Document document = waitForFinalStatus(id);
+
+		assertThat(document.getStatus()).isEqualTo(DocumentStatus.READY);
+		assertThat(document.getErrorMessage()).isNull();
+		assertThat(document.getChunkCount()).isEqualTo(chunkCount);
+		assertThat(chunkRows(id)).isEqualTo(chunkCount);
+	}
+
+	@Test
+	void onlyFailedDocumentsCanBeReprocessed() throws Exception {
+		UUID id = uploadAndWaitForReady("guide.txt");
+
+		assertThatThrownBy(() -> documentService.reprocess(id))
+				.isInstanceOf(InvalidDocumentStateException.class)
+				.hasMessage("Only failed documents can be reprocessed.");
+	}
+
+	@Test
+	void cannotReprocessAnotherUsersDocument() {
+		var alice = users.findByUsername("alice").orElseThrow();
+		Document aliceDoc = documents.save(new Document(alice, "a.txt", "text/plain", 1,
+				storage.save(alice.getId(), "txt", "a".getBytes()), "e".repeat(64)));
+		documents.updateStatus(aliceDoc.getId(), DocumentStatus.FAILED, 0, "x", Instant.now());
+
+		assertThatThrownBy(() -> documentService.reprocess(aliceDoc.getId()))
+				.isInstanceOf(DocumentNotFoundException.class);
+	}
+
+	@Test
+	void startupMarksInterruptedDocumentsAsFailed() {
+		var demo = users.findByUsername("demo").orElseThrow();
+		Document stuck = documents.save(new Document(demo, "stuck.txt", "text/plain", 1,
+				storage.save(demo.getId(), "txt", "s".getBytes()), "f".repeat(64)));
+		documents.updateStatus(stuck.getId(), DocumentStatus.PROCESSING, 0, null, Instant.now());
+
+		ingestionService.failInterruptedDocuments();
+
+		Document after = documents.findById(stuck.getId()).orElseThrow();
+		assertThat(after.getStatus()).isEqualTo(DocumentStatus.FAILED);
+		assertThat(after.getErrorMessage()).contains("interrupted by a restart");
+	}
+
+	private UUID uploadAndWaitForReady(String name) throws InterruptedException {
+		UUID id = documentService.upload(new MockMultipartFile("file", name, "text/plain", TEXT.getBytes())).id();
+		assertThat(waitForFinalStatus(id).getStatus()).isEqualTo(DocumentStatus.READY);
+		return id;
+	}
+
+	private Document waitForFinalStatus(UUID id) throws InterruptedException {
+		for (int i = 0; i < 150; i++) {
+			Document document = documents.findById(id).orElseThrow();
+			if (document.getStatus() == DocumentStatus.READY || document.getStatus() == DocumentStatus.FAILED) {
+				return document;
+			}
+			Thread.sleep(100);
+		}
+		return fail("Ingestion did not finish within 15 seconds");
+	}
+
+	private int chunkRows(UUID documentId) {
+		Integer count = jdbc.queryForObject("select count(*) from vector_store where metadata->>'document_id' = ?",
+				Integer.class, documentId.toString());
+		return count == null ? 0 : count;
+	}
+
+}

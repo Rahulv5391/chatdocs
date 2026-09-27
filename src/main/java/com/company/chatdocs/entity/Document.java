@@ -67,6 +67,13 @@ public class Document extends BaseEntity {
 		this.checksumSha256 = checksumSha256;
 	}
 
+	/** Puts the document back in the queue so ingestion runs again. */
+	public void requeue() {
+		status = DocumentStatus.UPLOADED;
+		chunkCount = 0;
+		errorMessage = null;
+	}
+
 	@PrePersist
 	@PreUpdate
 	protected void onUpdate() {

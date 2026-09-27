@@ -4,8 +4,10 @@ import com.company.chatdocs.config.AppProperties;
 import com.company.chatdocs.dto.DocumentDto;
 import com.company.chatdocs.entity.AppUser;
 import com.company.chatdocs.entity.Document;
+import com.company.chatdocs.entity.DocumentStatus;
 import com.company.chatdocs.event.DocumentUploadedEvent;
 import com.company.chatdocs.exception.DocumentNotFoundException;
+import com.company.chatdocs.exception.InvalidDocumentStateException;
 import com.company.chatdocs.exception.UploadRejectedException;
 import com.company.chatdocs.repository.DocumentRepository;
 import com.vaadin.hilla.BrowserCallable;
@@ -42,14 +44,16 @@ public class DocumentService {
 	private final FileStorageService storage;
 	private final AppProperties properties;
 	private final ApplicationEventPublisher events;
+	private final IngestionService ingestion;
 
 	DocumentService(DocumentRepository documents, CurrentUser currentUser, FileStorageService storage,
-			AppProperties properties, ApplicationEventPublisher events) {
+			AppProperties properties, ApplicationEventPublisher events, IngestionService ingestion) {
 		this.documents = documents;
 		this.currentUser = currentUser;
 		this.storage = storage;
 		this.properties = properties;
 		this.events = events;
+		this.ingestion = ingestion;
 	}
 
 	/** Returns only the logged-in user's documents, newest first. */
@@ -105,7 +109,7 @@ public class DocumentService {
 	}
 
 	/**
-	 * Deletes one of the logged-in user's documents: first the row, then the file.
+	 * Deletes one of the logged-in user's documents: the row, its chunks in the vector store, then the file.
 	 *
 	 * @throws DocumentNotFoundException if the id doesn't exist or belongs to another user
 	 */
@@ -116,7 +120,27 @@ public class DocumentService {
 		documents.delete(document);
 		// Flush so a database error happens before the file is gone; a failed file delete rolls the row back.
 		documents.flush();
+		// The vector store uses the same database connection, so this is part of the same transaction.
+		ingestion.deleteChunks(id);
 		storage.delete(document.getStoragePath());
+	}
+
+	/**
+	 * Runs ingestion again for a FAILED document. Old chunks are cleared when ingestion starts.
+	 *
+	 * @throws DocumentNotFoundException      if the id doesn't exist or belongs to another user
+	 * @throws InvalidDocumentStateException if the document isn't FAILED
+	 */
+	@Transactional
+	public @NonNull DocumentDto reprocess(@NonNull UUID id) {
+		Document document = documents.findByIdAndOwnerId(id, currentUser.get().getId())
+				.orElseThrow(DocumentNotFoundException::new);
+		if (document.getStatus() != DocumentStatus.FAILED) {
+			throw new InvalidDocumentStateException("Only failed documents can be reprocessed.");
+		}
+		document.requeue();
+		events.publishEvent(new DocumentUploadedEvent(id));
+		return DocumentDto.from(document);
 	}
 
 	private static byte[] readBytes(MultipartFile file) {
