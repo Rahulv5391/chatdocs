@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ViewConfig } from '@vaadin/hilla-file-router/types.js';
 import { EndpointError } from '@vaadin/hilla-frontend';
-import { Grid, GridColumn, Notification, Upload, type UploadRequestEvent } from '@vaadin/react-components';
+import {
+  Button,
+  ConfirmDialog,
+  Grid,
+  GridColumn,
+  Notification,
+  Upload,
+  type UploadRequestEvent,
+} from '@vaadin/react-components';
 import { DocumentService } from 'Frontend/generated/endpoints';
 import type DocumentDto from 'Frontend/generated/com/company/chatdocs/dto/DocumentDto';
 
@@ -24,6 +32,7 @@ function showError(message: string) {
 
 export default function DocumentsView() {
   const [documents, setDocuments] = useState<DocumentDto[]>([]);
+  const [toDelete, setToDelete] = useState<DocumentDto>();
 
   const refresh = useCallback(() => DocumentService.list().then(setDocuments), []);
 
@@ -50,6 +59,20 @@ export default function DocumentsView() {
     }
   }
 
+  async function confirmDelete() {
+    if (!toDelete) return;
+    const doc = toDelete;
+    setToDelete(undefined);
+    try {
+      await DocumentService.delete(doc.id);
+      Notification.show(`Deleted ${doc.fileName}`, { theme: 'success', position: 'bottom-end' });
+    } catch (e) {
+      showError(e instanceof EndpointError ? e.message : 'Delete failed.');
+    } finally {
+      await refresh();
+    }
+  }
+
   return (
     <main style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
       <Upload
@@ -67,8 +90,26 @@ export default function DocumentsView() {
           {({ item }: { item: DocumentDto }) => new Date(item.createdAt).toLocaleString()}
         </GridColumn>
         <GridColumn path="status" header="Status" autoWidth />
+        <GridColumn autoWidth flexGrow={0}>
+          {({ item }: { item: DocumentDto }) => (
+            <Button theme="error tertiary small" onClick={() => setToDelete(item)}>
+              Delete
+            </Button>
+          )}
+        </GridColumn>
       </Grid>
       {documents.length === 0 && <p>No documents yet.</p>}
+      <ConfirmDialog
+        opened={!!toDelete}
+        header="Delete document?"
+        cancelButtonVisible
+        confirmText="Delete"
+        confirmTheme="error primary"
+        onConfirm={confirmDelete}
+        onCancel={() => setToDelete(undefined)}
+      >
+        {toDelete && `"${toDelete.fileName}" will be permanently deleted.`}
+      </ConfirmDialog>
     </main>
   );
 }

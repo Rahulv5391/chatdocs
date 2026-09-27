@@ -4,6 +4,7 @@ import com.company.chatdocs.config.AppProperties;
 import com.company.chatdocs.dto.DocumentDto;
 import com.company.chatdocs.entity.AppUser;
 import com.company.chatdocs.entity.Document;
+import com.company.chatdocs.exception.DocumentNotFoundException;
 import com.company.chatdocs.exception.UploadRejectedException;
 import com.company.chatdocs.repository.DocumentRepository;
 import com.vaadin.hilla.BrowserCallable;
@@ -21,6 +22,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 
 @BrowserCallable
 @PermitAll
@@ -93,6 +95,21 @@ public class DocumentService {
 			storage.delete(storagePath);
 			throw e;
 		}
+	}
+
+	/**
+	 * Deletes one of the logged-in user's documents: first the row, then the file.
+	 *
+	 * @throws DocumentNotFoundException if the id doesn't exist or belongs to another user
+	 */
+	@Transactional
+	public void delete(@NonNull UUID id) {
+		Document document = documents.findByIdAndOwnerId(id, currentUser.get().getId())
+				.orElseThrow(DocumentNotFoundException::new);
+		documents.delete(document);
+		// Flush so a database error happens before the file is gone; a failed file delete rolls the row back.
+		documents.flush();
+		storage.delete(document.getStoragePath());
 	}
 
 	private static byte[] readBytes(MultipartFile file) {
