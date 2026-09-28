@@ -12,4 +12,9 @@ public interface AppUserRepository extends JpaRepository<AppUser, UUID> {
 
 	boolean existsByUsername(String username);
 
+	/** Usernames are unique regardless of case, so "Alice" can't sign up next to "alice". */
+	Optional<AppUser> findByUsernameIgnoreCase(String username);
+
+	boolean existsByUsernameIgnoreCase(String username);
+
 }

@@ -36,7 +36,8 @@ Node.js is not needed: the Vaadin Maven plugin downloads it.
 ./mvnw spring-boot:run
 ```
 
-Open <http://localhost:8080> and log in with a demo user (created only in the `dev` profile, which is the default):
+Open <http://localhost:8080> and either **create an account** (*Create an account* on the login page) or log in with a
+demo user (created only in the `dev` profile, which is the default):
 
 | User | Password |
 |---|---|

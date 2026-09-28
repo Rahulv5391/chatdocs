@@ -1,9 +1,9 @@
 import { type FormEvent, useState } from 'react';
-import { Navigate, useLocation } from 'react-router';
+import { Link, Navigate, useLocation } from 'react-router';
 import { ViewConfig } from '@vaadin/hilla-file-router/types.js';
 import { PasswordField, TextField } from '@vaadin/react-components';
 import { useAuth } from 'Frontend/auth';
-import { SparkIcon } from 'Frontend/components/Icons';
+import AuthCard from 'Frontend/components/AuthCard';
 
 export const config: ViewConfig = {
   title: 'Log in',
@@ -50,34 +50,35 @@ export default function LoginView() {
   }
 
   return (
-    <main className="login-page">
-      <div className="login-card">
-        <span className="brand-mark lg">
-          <SparkIcon size={26} />
-        </span>
-        <h1>Welcome to DocChat</h1>
-        <p className="subtitle">Chat with your documents. Sign in to continue.</p>
-        <form onSubmit={submit}>
-          {hasError && <div className="login-error">Incorrect username or password.</div>}
-          <TextField
-            label="Username"
-            autocomplete="username"
-            autofocus
-            value={username}
-            onValueChanged={(e) => setUsername(e.detail.value)}
-          />
-          <PasswordField
-            label="Password"
-            autocomplete="current-password"
-            value={password}
-            onValueChanged={(e) => setPassword(e.detail.value)}
-            onKeyDown={(e) => e.key === 'Enter' && submit(e)}
-          />
-          <button type="submit" className="btn primary" disabled={loggingIn || !username || !password}>
-            {loggingIn ? 'Signing in…' : 'Sign in'}
-          </button>
-        </form>
-      </div>
-    </main>
+    <AuthCard
+      title="Welcome to DocChat"
+      subtitle="Chat with your documents. Sign in to continue."
+      footer={
+        <>
+          New here? <Link to="/signup">Create an account</Link>
+        </>
+      }
+    >
+      <form onSubmit={submit}>
+        {hasError && <div className="login-error">Incorrect username or password.</div>}
+        <TextField
+          label="Username"
+          autocomplete="username"
+          autofocus
+          value={username}
+          onValueChanged={(e) => setUsername(e.detail.value)}
+        />
+        <PasswordField
+          label="Password"
+          autocomplete="current-password"
+          value={password}
+          onValueChanged={(e) => setPassword(e.detail.value)}
+          onKeyDown={(e) => e.key === 'Enter' && submit(e)}
+        />
+        <button type="submit" className="btn primary" disabled={loggingIn || !username || !password}>
+          {loggingIn ? 'Signing in…' : 'Sign in'}
+        </button>
+      </form>
+    </AuthCard>
   );
 }

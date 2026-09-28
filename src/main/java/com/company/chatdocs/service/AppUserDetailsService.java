@@ -18,7 +18,7 @@ class AppUserDetailsService implements UserDetailsService {
 
 	@Override
 	public UserDetails loadUserByUsername(String username) {
-		return users.findByUsername(username)
+		return users.findByUsernameIgnoreCase(username.strip())
 				.map(user -> User.withUsername(user.getUsername())
 						.password(user.getPasswordHash())
 						.roles(user.getRole().name())
