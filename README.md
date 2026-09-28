@@ -6,6 +6,12 @@ This is a proof of concept for **Retrieval-Augmented Generation (RAG)** built wi
 has a private library of documents. Questions are answered by Google Gemini using only the passages retrieved from
 that library, and every answer includes clickable source citations that open the file at the cited page.
 
+<img width="1279" height="719" alt="Login Page" src="https://github.com/user-attachments/assets/39762089-0701-4cd6-9018-f9c75c981a7e" />
+<img width="1279" height="719" alt="Home Page Doc" src="https://github.com/user-attachments/assets/626f3d65-3cba-4879-9c16-6ae7a8def43a" />
+<img width="1279" height="719" alt="Chat Page" src="https://github.com/user-attachments/assets/2f15e13b-21e6-43d1-b46e-2c04f77ea610" />
+<img width="1279" height="719" alt="Upload Page" src="https://github.com/user-attachments/assets/249fc554-8dd7-4dff-b375-2cd80e4e9eb9" />
+
+
 ## Features
 
 - **Accounts:** sign up, log in, log out. Every user sees only their own documents and chats.
