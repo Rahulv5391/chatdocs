@@ -35,8 +35,6 @@ public class FakeChatModelConfiguration {
 
 		public volatile String reply = DEFAULT_REPLY;
 
-		public volatile Prompt lastPrompt;
-
 		/** Prompt of the last non-streaming call (the follow-up rewrite). */
 		public volatile Prompt lastCallPrompt;
 
@@ -57,7 +55,6 @@ public class FakeChatModelConfiguration {
 		public ChatResponse call(Prompt prompt) {
 			calls.incrementAndGet();
 			rewriteCalls.incrementAndGet();
-			lastPrompt = prompt;
 			lastCallPrompt = prompt;
 			if (rewriteReply != null) {
 				return response(rewriteReply);
@@ -71,7 +68,6 @@ public class FakeChatModelConfiguration {
 		@Override
 		public Flux<ChatResponse> stream(Prompt prompt) {
 			calls.incrementAndGet();
-			lastPrompt = prompt;
 			lastStreamPrompt = prompt;
 			Flux<ChatResponse> words = Flux.fromArray(reply.split("(?<= )")).map(FakeChatModel::response);
 			if (failure != null) {
@@ -85,7 +81,6 @@ public class FakeChatModelConfiguration {
 			rewriteCalls.set(0);
 			reply = DEFAULT_REPLY;
 			rewriteReply = null;
-			lastPrompt = null;
 			lastCallPrompt = null;
 			lastStreamPrompt = null;
 			streamDelay = Duration.ZERO;

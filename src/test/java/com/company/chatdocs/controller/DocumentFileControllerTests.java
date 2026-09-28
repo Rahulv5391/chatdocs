@@ -1,8 +1,8 @@
 package com.company.chatdocs.controller;
 
+import com.company.chatdocs.TestDocuments;
 import com.company.chatdocs.TestcontainersConfiguration;
 import com.company.chatdocs.entity.AppUser;
-import com.company.chatdocs.entity.Document;
 import com.company.chatdocs.repository.AppUserRepository;
 import com.company.chatdocs.repository.DocumentRepository;
 import com.company.chatdocs.service.FileStorageService;
@@ -16,6 +16,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -54,7 +55,7 @@ class DocumentFileControllerTests {
 		assertThat(response.getHeaders().getContentType()).hasToString("text/plain");
 		assertThat(response.getHeaders().getFirst(HttpHeaders.CONTENT_DISPOSITION))
 				.startsWith("inline").contains("notes.txt");
-		assertThat(response.getBody().getContentAsString(java.nio.charset.StandardCharsets.UTF_8))
+		assertThat(response.getBody().getContentAsString(StandardCharsets.UTF_8))
 				.isEqualTo("hello from demo");
 	}
 
@@ -68,9 +69,7 @@ class DocumentFileControllerTests {
 
 	private UUID store(String username, String fileName, String text) {
 		AppUser owner = users.findByUsername(username).orElseThrow();
-		String path = storage.save(owner.getId(), "txt", text.getBytes());
-		return documents.save(new Document(owner, fileName, "text/plain", text.length(), path,
-				UUID.randomUUID().toString().replace("-", "").repeat(2))).getId();
+		return TestDocuments.saveText(storage, documents, owner, fileName, text).getId();
 	}
 
 }

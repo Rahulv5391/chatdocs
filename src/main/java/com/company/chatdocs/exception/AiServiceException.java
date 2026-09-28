@@ -1,6 +1,5 @@
 package com.company.chatdocs.exception;
 
-import com.company.chatdocs.service.EmbeddingThrottler;
 import com.vaadin.hilla.exception.EndpointException;
 
 /**
@@ -24,8 +23,18 @@ public class AiServiceException extends EndpointException {
 		if (error instanceof AiServiceException already) {
 			return already;
 		}
-		return new AiServiceException(EmbeddingThrottler.isRateLimited(error) ? QUOTA_MESSAGE : UNAVAILABLE_MESSAGE,
-				error);
+		return new AiServiceException(isRateLimited(error) ? QUOTA_MESSAGE : UNAVAILABLE_MESSAGE, error);
+	}
+
+	/** Gemini reports quota errors as HTTP 429 / RESOURCE_EXHAUSTED, possibly wrapped by Spring AI. */
+	public static boolean isRateLimited(Throwable error) {
+		for (Throwable t = error; t != null; t = t.getCause()) {
+			String message = String.valueOf(t.getMessage());
+			if (message.contains("429") || message.contains("RESOURCE_EXHAUSTED")) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 }

@@ -3,6 +3,7 @@ package com.company.chatdocs.service;
 import com.company.chatdocs.config.AppProperties;
 import com.company.chatdocs.entity.DocumentStatus;
 import com.company.chatdocs.event.DocumentUploadedEvent;
+import com.company.chatdocs.exception.AiServiceException;
 import com.company.chatdocs.repository.DocumentRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,6 +11,7 @@ import org.springframework.ai.document.Document;
 import org.springframework.ai.reader.pdf.PagePdfDocumentReader;
 import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.core.NestedExceptionUtils;
@@ -71,7 +73,7 @@ public class IngestionService {
 
 	/** Removes all stored chunks of a document. Safe to call when there are none. */
 	public void deleteChunks(UUID documentId) {
-		vectorStore.delete("document_id == '" + documentId + "'");
+		vectorStore.delete(new FilterExpressionBuilder().eq(ChunkMetadata.DOCUMENT_ID, documentId.toString()).build());
 	}
 
 	/** Processes one document, recording READY with the chunk count, or FAILED with a readable reason. */
@@ -114,22 +116,19 @@ public class IngestionService {
 		return pages;
 	}
 
-	/**
-	 * Replaces the reader's metadata with ours. These keys are what retrieval filters on (user_id, document_id)
-	 * and what citations show (file_name, page).
-	 */
+	/** Replaces the reader's metadata with the {@link ChunkMetadata} keys. */
 	private static List<Document> withMetadata(com.company.chatdocs.entity.Document document, List<Document> chunks) {
 		List<Document> result = new ArrayList<>(chunks.size());
 		for (int i = 0; i < chunks.size(); i++) {
 			Document chunk = chunks.get(i);
 			Map<String, Object> metadata = new HashMap<>();
-			metadata.put("document_id", document.getId().toString());
-			metadata.put("user_id", document.getOwnerId().toString());
-			metadata.put("file_name", document.getFileName());
-			metadata.put("chunk_index", i);
+			metadata.put(ChunkMetadata.DOCUMENT_ID, document.getId().toString());
+			metadata.put(ChunkMetadata.USER_ID, document.getOwnerId().toString());
+			metadata.put(ChunkMetadata.FILE_NAME, document.getFileName());
+			metadata.put(ChunkMetadata.CHUNK_INDEX, i);
 			Object page = chunk.getMetadata().get(PagePdfDocumentReader.METADATA_START_PAGE_NUMBER);
 			if (page != null) {
-				metadata.put("page", page);
+				metadata.put(ChunkMetadata.PAGE, page);
 			}
 			result.add(new Document(chunk.getText(), metadata));
 		}
@@ -143,7 +142,7 @@ public class IngestionService {
 		catch (RuntimeException e) {
 			// Don't leave half a document searchable.
 			deleteChunks(documentId);
-			String reason = EmbeddingThrottler.isRateLimited(e)
+			String reason = AiServiceException.isRateLimited(e)
 					? "Gemini quota exceeded. Try again later."
 					: "Could not create embeddings: " + rootMessage(e);
 			throw new IngestionException(reason, e);

@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ViewConfig } from '@vaadin/hilla-file-router/types.js';
-import { EndpointError } from '@vaadin/hilla-frontend';
 import {
   Button,
   ConfirmDialog,
   Grid,
   GridColumn,
-  Notification,
   Upload,
   type UploadRequestEvent,
 } from '@vaadin/react-components';
@@ -14,6 +12,7 @@ import { DocumentService } from 'Frontend/generated/endpoints';
 import type DocumentDto from 'Frontend/generated/com/company/chatdocs/dto/DocumentDto';
 import DocumentStatus from 'Frontend/generated/com/company/chatdocs/entity/DocumentStatus';
 import StatusBadge from 'Frontend/components/StatusBadge';
+import { errorMessage, showError, showSuccess } from 'Frontend/util/notifications';
 
 export const config: ViewConfig = {
   title: 'Documents',
@@ -37,10 +36,6 @@ function formatSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function showError(message: string) {
-  Notification.show(message, { theme: 'error', position: 'bottom-end', duration: 5000 });
 }
 
 export default function DocumentsView() {
@@ -71,7 +66,7 @@ export default function DocumentsView() {
       file.complete = true;
       await refresh();
     } catch (e) {
-      file.error = e instanceof EndpointError ? e.message : 'Upload failed.';
+      file.error = errorMessage(e, 'Upload failed.');
       showError(`${file.name}: ${file.error}`);
     } finally {
       file.uploading = false;
@@ -84,7 +79,7 @@ export default function DocumentsView() {
     try {
       await DocumentService.reprocess(document.id);
     } catch (e) {
-      showError(e instanceof EndpointError ? e.message : 'Reprocess failed.');
+      showError(errorMessage(e, 'Reprocess failed.'));
     } finally {
       await refresh();
     }
@@ -96,9 +91,9 @@ export default function DocumentsView() {
     setToDelete(undefined);
     try {
       await DocumentService.delete(doc.id);
-      Notification.show(`Deleted ${doc.fileName}`, { theme: 'success', position: 'bottom-end' });
+      showSuccess(`Deleted ${doc.fileName}`);
     } catch (e) {
-      showError(e instanceof EndpointError ? e.message : 'Delete failed.');
+      showError(errorMessage(e, 'Delete failed.'));
     } finally {
       await refresh();
     }

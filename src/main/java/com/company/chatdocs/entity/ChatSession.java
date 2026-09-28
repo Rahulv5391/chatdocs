@@ -33,6 +33,7 @@ public class ChatSession extends BaseEntity {
 	@JoinColumn(name = "owner_id", nullable = false, updatable = false)
 	private AppUser owner;
 
+	/** Same column as {@link #owner}, read-only; lets queries filter by owner id without a join. */
 	@Column(name = "owner_id", insertable = false, updatable = false)
 	private UUID ownerId;
 
@@ -78,10 +79,6 @@ public class ChatSession extends BaseEntity {
 	@PreUpdate
 	protected void onUpdate() {
 		updatedAt = Instant.now();
-	}
-
-	public UUID getOwnerId() {
-		return ownerId;
 	}
 
 	public String getTitle() {

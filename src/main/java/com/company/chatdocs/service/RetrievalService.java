@@ -41,10 +41,11 @@ public class RetrievalService {
 	 */
 	public List<Document> search(UUID userId, String query, Collection<UUID> docScope) {
 		var filter = new FilterExpressionBuilder();
-		var ownChunks = filter.eq("user_id", userId.toString());
+		var ownChunks = filter.eq(ChunkMetadata.USER_ID, userId.toString());
 		var expression = docScope.isEmpty()
 				? ownChunks
-				: filter.and(ownChunks, filter.in("document_id", docScope.stream().map(id -> (Object) id.toString()).toList()));
+				: filter.and(ownChunks, filter.in(ChunkMetadata.DOCUMENT_ID,
+						docScope.stream().map(id -> (Object) id.toString()).toList()));
 
 		List<Document> results = vectorStore.similaritySearch(SearchRequest.builder()
 				.query(query)

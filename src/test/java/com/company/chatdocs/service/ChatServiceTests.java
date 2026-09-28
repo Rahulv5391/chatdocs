@@ -3,13 +3,13 @@ package com.company.chatdocs.service;
 import com.company.chatdocs.FakeChatModelConfiguration;
 import com.company.chatdocs.FakeChatModelConfiguration.FakeChatModel;
 import com.company.chatdocs.FakeEmbeddingModelConfiguration;
+import com.company.chatdocs.TestDocuments;
 import com.company.chatdocs.TestcontainersConfiguration;
 import com.company.chatdocs.dto.ChatMessageDto;
 import com.company.chatdocs.dto.ChatSessionDto;
 import com.company.chatdocs.dto.Citation;
 import com.company.chatdocs.entity.AppUser;
 import com.company.chatdocs.entity.ChatSession;
-import com.company.chatdocs.entity.Document;
 import com.company.chatdocs.entity.MessageRole;
 import com.company.chatdocs.exception.AiServiceException;
 import com.company.chatdocs.exception.ChatSessionNotFoundException;
@@ -102,9 +102,9 @@ class ChatServiceTests {
 		assertThat(answer.citations().getFirst().snippet()).contains("24 days of annual leave");
 
 		// The prompt had the rules, the numbered context and the question.
-		String system = chatModel.lastPrompt.getSystemMessage().getText();
+		String system = chatModel.lastStreamPrompt.getSystemMessage().getText();
 		assertThat(system).contains("ONLY the numbered context", "[1] (leave.txt)", "24 days of annual leave");
-		assertThat(chatModel.lastPrompt.getUserMessage().getText()).contains("How many days");
+		assertThat(chatModel.lastStreamPrompt.getUserMessage().getText()).contains("How many days");
 
 		// Citations survive a reload.
 		assertThat(chatService.getMessages(sessionId).get(1).citations()).isEqualTo(answer.citations());
@@ -150,7 +150,7 @@ class ChatServiceTests {
 				.hasMessage(AiServiceException.UNAVAILABLE_MESSAGE);
 
 		assertThat(chatService.getMessages(sessionId).getLast().content())
-				.endsWith(ChatService.note(com.company.chatdocs.exception.AiServiceException.UNAVAILABLE_MESSAGE));
+				.endsWith(ChatService.note(AiServiceException.UNAVAILABLE_MESSAGE));
 	}
 
 	@Test
@@ -379,11 +379,9 @@ class ChatServiceTests {
 	}
 
 	private UUID ingest(AppUser owner, String fileName, String text) {
-		String path = storage.save(owner.getId(), "txt", text.getBytes());
-		Document document = documents.save(new Document(owner, fileName, "text/plain", text.length(), path,
-				UUID.randomUUID().toString().replace("-", "").repeat(2)));
-		ingestionService.ingest(document.getId());
-		return document.getId();
+		UUID id = TestDocuments.saveText(storage, documents, owner, fileName, text).getId();
+		ingestionService.ingest(id);
+		return id;
 	}
 
 }

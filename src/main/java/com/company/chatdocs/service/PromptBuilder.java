@@ -6,6 +6,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -25,9 +26,11 @@ public class PromptBuilder {
 		List<Citation> citations = new ArrayList<>(chunks.size());
 		for (int i = 0; i < chunks.size(); i++) {
 			Document chunk = chunks.get(i);
+			Map<String, Object> metadata = chunk.getMetadata();
 			int index = i + 1;
-			String fileName = String.valueOf(chunk.getMetadata().get("file_name"));
-			Integer page = chunk.getMetadata().get("page") instanceof Number number ? number.intValue() : null;
+			UUID documentId = UUID.fromString(String.valueOf(metadata.get(ChunkMetadata.DOCUMENT_ID)));
+			String fileName = String.valueOf(metadata.get(ChunkMetadata.FILE_NAME));
+			Integer page = metadata.get(ChunkMetadata.PAGE) instanceof Number number ? number.intValue() : null;
 			String content = String.valueOf(chunk.getText()).strip();
 
 			text.append('[').append(index).append("] (").append(fileName);
@@ -36,15 +39,10 @@ public class PromptBuilder {
 			}
 			text.append(")\n").append(content).append("\n\n");
 
-			citations.add(new Citation(index, UUID.fromString(String.valueOf(chunk.getMetadata().get("document_id"))),
-					fileName, page, snippet(content)));
+			citations.add(new Citation(index, documentId, fileName, page,
+					TextUtils.abbreviate(content, SNIPPET_LENGTH)));
 		}
 		return new Context(text.toString().strip(), citations);
-	}
-
-	private static String snippet(String content) {
-		String singleLine = content.replaceAll("\\s+", " ");
-		return singleLine.length() <= SNIPPET_LENGTH ? singleLine : singleLine.substring(0, SNIPPET_LENGTH) + "…";
 	}
 
 }

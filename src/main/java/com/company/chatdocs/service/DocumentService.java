@@ -115,8 +115,7 @@ public class DocumentService {
 	 */
 	@Transactional
 	public void delete(@NonNull UUID id) {
-		Document document = documents.findByIdAndOwnerId(id, currentUser.get().getId())
-				.orElseThrow(DocumentNotFoundException::new);
+		Document document = ownDocument(id);
 		documents.delete(document);
 		// Flush so a database error happens before the file is gone; a failed file delete rolls the row back.
 		documents.flush();
@@ -133,14 +132,17 @@ public class DocumentService {
 	 */
 	@Transactional
 	public @NonNull DocumentDto reprocess(@NonNull UUID id) {
-		Document document = documents.findByIdAndOwnerId(id, currentUser.get().getId())
-				.orElseThrow(DocumentNotFoundException::new);
+		Document document = ownDocument(id);
 		if (document.getStatus() != DocumentStatus.FAILED) {
 			throw new InvalidDocumentStateException("Only failed documents can be reprocessed.");
 		}
 		document.requeue();
 		events.publishEvent(new DocumentUploadedEvent(id));
 		return DocumentDto.from(document);
+	}
+
+	private Document ownDocument(UUID id) {
+		return documents.findByIdAndOwnerId(id, currentUser.get().getId()).orElseThrow(DocumentNotFoundException::new);
 	}
 
 	private static byte[] readBytes(MultipartFile file) {

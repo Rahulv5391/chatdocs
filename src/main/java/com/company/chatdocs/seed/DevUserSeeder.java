@@ -2,7 +2,6 @@ package com.company.chatdocs.seed;
 
 import com.company.chatdocs.entity.AppUser;
 import com.company.chatdocs.repository.AppUserRepository;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.CommandLineRunner;
@@ -10,9 +9,7 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
-/**
- * Inserts the demo users on startup in the dev profile. Skips users that already exist.
- */
+/** Inserts the demo users on startup in the dev profile. Skips users that already exist. */
 @Component
 @Profile("dev")
 class DevUserSeeder implements CommandLineRunner {

@@ -1,15 +1,16 @@
 package com.company.chatdocs.service;
 
 import com.company.chatdocs.FakeEmbeddingModelConfiguration;
+import com.company.chatdocs.TestDocuments;
 import com.company.chatdocs.TestcontainersConfiguration;
 import com.company.chatdocs.entity.AppUser;
-import com.company.chatdocs.entity.Document;
 import com.company.chatdocs.entity.DocumentStatus;
 import com.company.chatdocs.repository.AppUserRepository;
 import com.company.chatdocs.repository.DocumentRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.ai.document.Document;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
@@ -117,16 +118,14 @@ class RetrievalServiceTests {
 	}
 
 	private UUID ingest(AppUser owner, String fileName, String text) {
-		String path = storage.save(owner.getId(), "txt", text.getBytes());
-		Document document = documents.save(new Document(owner, fileName, "text/plain", text.length(), path,
-				UUID.randomUUID().toString().replace("-", "").repeat(2)));
-		ingestionService.ingest(document.getId());
-		assertThat(documents.findById(document.getId()).orElseThrow().getStatus()).isEqualTo(DocumentStatus.READY);
-		return document.getId();
+		UUID id = TestDocuments.saveText(storage, documents, owner, fileName, text).getId();
+		ingestionService.ingest(id);
+		assertThat(documents.findById(id).orElseThrow().getStatus()).isEqualTo(DocumentStatus.READY);
+		return id;
 	}
 
-	private static List<String> fileNames(List<org.springframework.ai.document.Document> chunks) {
-		return chunks.stream().map(chunk -> (String) chunk.getMetadata().get("file_name")).toList();
+	private static List<String> fileNames(List<Document> chunks) {
+		return chunks.stream().map(chunk -> (String) chunk.getMetadata().get(ChunkMetadata.FILE_NAME)).toList();
 	}
 
 }

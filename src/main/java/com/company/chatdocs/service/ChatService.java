@@ -18,9 +18,9 @@ import com.company.chatdocs.repository.DocumentRepository;
 import com.vaadin.hilla.BrowserCallable;
 import jakarta.annotation.security.PermitAll;
 import org.jspecify.annotations.NonNull;
-import org.springframework.ai.document.Document;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.ai.document.Document;
 import org.springframework.data.domain.Limit;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
@@ -51,7 +51,7 @@ public class ChatService {
 
 	static final int MAX_TITLE_LENGTH = 200;
 
-	static final String STOPPED_NOTE = "_(Stopped)_";
+	static final String STOPPED_NOTE = note("Stopped");
 
 	private static final int AUTO_TITLE_LENGTH = 60;
 
@@ -70,8 +70,7 @@ public class ChatService {
 	private final int maxQuestionLength;
 
 	ChatService(ChatSessionRepository sessions, ChatMessageRepository messages, DocumentRepository documents,
-			CurrentUser currentUser,
-			RetrievalService retrieval, GenerationService generation, JsonMapper json,
+			CurrentUser currentUser, RetrievalService retrieval, GenerationService generation, JsonMapper json,
 			PlatformTransactionManager transactionManager, AppProperties properties) {
 		this.sessions = sessions;
 		this.messages = messages;
@@ -165,7 +164,7 @@ public class ChatService {
 			ChatSession session = ownSession(sessionId);
 			List<GenerationService.HistoryMessage> recent = recentHistory(sessionId);
 			if (ChatSession.DEFAULT_TITLE.equals(session.getTitle()) && recent.isEmpty()) {
-				session.rename(autoTitle(text));
+				session.rename(TextUtils.abbreviate(text, AUTO_TITLE_LENGTH));
 			}
 			session.touch();
 			messages.save(new ChatMessage(session, MessageRole.USER, text));
@@ -256,12 +255,6 @@ public class ChatService {
 				: json.readValue(message.getCitationsJson(), CITATION_LIST);
 		return new ChatMessageDto(message.getId(), message.getRole(), message.getContent(), message.getCreatedAt(),
 				citations);
-	}
-
-	private static String autoTitle(String question) {
-		String singleLine = question.replaceAll("\\s+", " ");
-		return singleLine.length() <= AUTO_TITLE_LENGTH ? singleLine
-				: singleLine.substring(0, AUTO_TITLE_LENGTH - 1).strip() + "…";
 	}
 
 }

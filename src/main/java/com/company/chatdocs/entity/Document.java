@@ -80,10 +80,6 @@ public class Document extends BaseEntity {
 		updatedAt = Instant.now();
 	}
 
-	public AppUser getOwner() {
-		return owner;
-	}
-
 	public UUID getOwnerId() {
 		return ownerId;
 	}
@@ -118,10 +114,6 @@ public class Document extends BaseEntity {
 
 	public String getErrorMessage() {
 		return errorMessage;
-	}
-
-	public Instant getUpdatedAt() {
-		return updatedAt;
 	}
 
 }

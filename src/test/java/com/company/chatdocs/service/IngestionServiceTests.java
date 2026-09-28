@@ -2,6 +2,7 @@ package com.company.chatdocs.service;
 
 import com.company.chatdocs.FakeEmbeddingModelConfiguration;
 import com.company.chatdocs.FakeEmbeddingModelConfiguration.FakeEmbeddingModel;
+import com.company.chatdocs.TestDocuments;
 import com.company.chatdocs.TestcontainersConfiguration;
 import com.company.chatdocs.entity.Document;
 import com.company.chatdocs.entity.DocumentStatus;
@@ -28,7 +29,6 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.fail;
 
 /**
  * Uploads real files and waits for the background ingestion (after commit, on another thread) to finish.
@@ -136,14 +136,7 @@ class IngestionServiceTests {
 
 	private Document uploadAndWait(String name, String contentType, byte[] content) throws InterruptedException {
 		UUID id = documentService.upload(new MockMultipartFile("file", name, contentType, content)).id();
-		for (int i = 0; i < 150; i++) {
-			Document document = documents.findById(id).orElseThrow();
-			if (document.getStatus() == DocumentStatus.READY || document.getStatus() == DocumentStatus.FAILED) {
-				return document;
-			}
-			Thread.sleep(100);
-		}
-		return fail("Ingestion did not finish within 15 seconds");
+		return TestDocuments.awaitIngestion(documents, id);
 	}
 
 	/** Builds a PDF with one page per string (an empty string gives a blank page). */

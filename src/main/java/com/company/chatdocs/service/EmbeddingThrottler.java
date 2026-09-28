@@ -1,6 +1,7 @@
 package com.company.chatdocs.service;
 
 import com.company.chatdocs.config.AppProperties;
+import com.company.chatdocs.exception.AiServiceException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
@@ -33,7 +34,7 @@ public class EmbeddingThrottler {
 		this.pause = properties.ingestion().pauseBetweenBatches();
 		// Waits 30s, then 60s, then 120s: per-minute quotas usually reset within that time.
 		this.retryTemplate = new RetryTemplate(RetryPolicy.builder()
-				.predicate(EmbeddingThrottler::isRateLimited)
+				.predicate(EmbeddingThrottler::shouldRetry)
 				.maxRetries(3)
 				.delay(Duration.ofSeconds(30))
 				.multiplier(2)
@@ -64,16 +65,12 @@ public class EmbeddingThrottler {
 		}
 	}
 
-	/** Gemini reports quota errors as HTTP 429 / RESOURCE_EXHAUSTED, possibly wrapped by Spring AI. */
-	public static boolean isRateLimited(Throwable error) {
-		for (Throwable t = error; t != null; t = t.getCause()) {
-			String message = String.valueOf(t.getMessage());
-			if (message.contains("429") || message.contains("RESOURCE_EXHAUSTED")) {
-				log.warn("Gemini rate limit hit: {}", message);
-				return true;
-			}
+	private static boolean shouldRetry(Throwable error) {
+		boolean rateLimited = AiServiceException.isRateLimited(error);
+		if (rateLimited) {
+			log.warn("Gemini rate limit hit, retrying the batch: {}", error.getMessage());
 		}
-		return false;
+		return rateLimited;
 	}
 
 	private static void sleep(Duration duration) {

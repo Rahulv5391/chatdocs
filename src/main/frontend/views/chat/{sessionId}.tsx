@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { ViewConfig } from '@vaadin/hilla-file-router/types.js';
-import { EndpointError, type Subscription } from '@vaadin/hilla-frontend';
-import { Button, Markdown, Message, MessageInput, Notification, TextField } from '@vaadin/react-components';
+import type { Subscription } from '@vaadin/hilla-frontend';
+import { Button, Markdown, Message, MessageInput, TextField } from '@vaadin/react-components';
 import { ChatService, DocumentService } from 'Frontend/generated/endpoints';
 import type ChatSessionDto from 'Frontend/generated/com/company/chatdocs/dto/ChatSessionDto';
 import type ChatMessageDto from 'Frontend/generated/com/company/chatdocs/dto/ChatMessageDto';
@@ -10,19 +10,12 @@ import MessageRole from 'Frontend/generated/com/company/chatdocs/entity/MessageR
 import type Citation from 'Frontend/generated/com/company/chatdocs/dto/Citation';
 import CitationChips from 'Frontend/components/CitationChips';
 import { useAuth } from 'Frontend/auth';
+import { errorMessage, showError } from 'Frontend/util/notifications';
 
 export const config: ViewConfig = {
   title: 'Chat',
   menu: { exclude: true },
 };
-
-function showError(message: string) {
-  Notification.show(message, { theme: 'error', position: 'bottom-end', duration: 5000 });
-}
-
-function errorMessage(e: unknown, fallback: string) {
-  return e instanceof EndpointError ? e.message : fallback;
-}
 
 /** Which documents the chat answers from, for the line under the title. */
 async function scopeLabel(session: ChatSessionDto) {

@@ -1,6 +1,7 @@
 package com.company.chatdocs.service;
 
 import com.company.chatdocs.FakeEmbeddingModelConfiguration;
+import com.company.chatdocs.TestDocuments;
 import com.company.chatdocs.TestcontainersConfiguration;
 import com.company.chatdocs.entity.Document;
 import com.company.chatdocs.entity.DocumentStatus;
@@ -23,7 +24,6 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.assertj.core.api.Assertions.fail;
 
 @Import({ TestcontainersConfiguration.class, FakeEmbeddingModelConfiguration.class })
 @SpringBootTest(properties = { "app.storage-dir=target/test-uploads", "app.ingestion.pause-between-batches=0s" })
@@ -75,7 +75,7 @@ class DocumentReprocessTests {
 		documents.updateStatus(id, DocumentStatus.FAILED, 0, "Simulated failure", Instant.now());
 
 		assertThat(documentService.reprocess(id).status()).isEqualTo(DocumentStatus.UPLOADED);
-		Document document = waitForFinalStatus(id);
+		Document document = TestDocuments.awaitIngestion(documents, id);
 
 		assertThat(document.getStatus()).isEqualTo(DocumentStatus.READY);
 		assertThat(document.getErrorMessage()).isNull();
@@ -119,19 +119,8 @@ class DocumentReprocessTests {
 
 	private UUID uploadAndWaitForReady(String name) throws InterruptedException {
 		UUID id = documentService.upload(new MockMultipartFile("file", name, "text/plain", TEXT.getBytes())).id();
-		assertThat(waitForFinalStatus(id).getStatus()).isEqualTo(DocumentStatus.READY);
+		assertThat(TestDocuments.awaitIngestion(documents, id).getStatus()).isEqualTo(DocumentStatus.READY);
 		return id;
-	}
-
-	private Document waitForFinalStatus(UUID id) throws InterruptedException {
-		for (int i = 0; i < 150; i++) {
-			Document document = documents.findById(id).orElseThrow();
-			if (document.getStatus() == DocumentStatus.READY || document.getStatus() == DocumentStatus.FAILED) {
-				return document;
-			}
-			Thread.sleep(100);
-		}
-		return fail("Ingestion did not finish within 15 seconds");
 	}
 
 	private int chunkRows(UUID documentId) {
