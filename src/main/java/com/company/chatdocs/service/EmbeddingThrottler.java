@@ -65,11 +65,11 @@ public class EmbeddingThrottler {
 	}
 
 	/** Gemini reports quota errors as HTTP 429 / RESOURCE_EXHAUSTED, possibly wrapped by Spring AI. */
-	static boolean isRateLimited(Throwable error) {
+	public static boolean isRateLimited(Throwable error) {
 		for (Throwable t = error; t != null; t = t.getCause()) {
 			String message = String.valueOf(t.getMessage());
 			if (message.contains("429") || message.contains("RESOURCE_EXHAUSTED")) {
-				log.warn("Gemini rate limit hit, retrying: {}", message);
+				log.warn("Gemini rate limit hit: {}", message);
 				return true;
 			}
 		}

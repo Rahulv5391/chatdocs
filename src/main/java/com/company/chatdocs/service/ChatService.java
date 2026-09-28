@@ -8,6 +8,7 @@ import com.company.chatdocs.entity.AppUser;
 import com.company.chatdocs.entity.ChatMessage;
 import com.company.chatdocs.entity.ChatSession;
 import com.company.chatdocs.entity.MessageRole;
+import com.company.chatdocs.exception.AiServiceException;
 import com.company.chatdocs.exception.ChatSessionNotFoundException;
 import com.company.chatdocs.exception.DocumentNotFoundException;
 import com.company.chatdocs.exception.InvalidInputException;
@@ -52,8 +53,6 @@ public class ChatService {
 
 	static final String STOPPED_NOTE = "_(Stopped)_";
 
-	static final String ERROR_NOTE = "_(Something went wrong while generating the answer. Please try again.)_";
-
 	private static final int AUTO_TITLE_LENGTH = 60;
 
 	private static final TypeReference<List<Citation>> CITATION_LIST = new TypeReference<>() {
@@ -68,6 +67,7 @@ public class ChatService {
 	private final JsonMapper json;
 	private final TransactionTemplate transaction;
 	private final int historyMessages;
+	private final int maxQuestionLength;
 
 	ChatService(ChatSessionRepository sessions, ChatMessageRepository messages, DocumentRepository documents,
 			CurrentUser currentUser,
@@ -82,6 +82,7 @@ public class ChatService {
 		this.json = json;
 		this.transaction = new TransactionTemplate(transactionManager);
 		this.historyMessages = properties.rag().historyMessages();
+		this.maxQuestionLength = properties.rag().maxQuestionLength();
 	}
 
 	/** The user's chats, most recently used first. */
@@ -154,6 +155,9 @@ public class ChatService {
 		if (text.isEmpty()) {
 			throw new InvalidInputException("The message can't be empty.");
 		}
+		if (text.length() > maxQuestionLength) {
+			throw new InvalidInputException("Please keep your question under " + maxQuestionLength + " characters.");
+		}
 		UUID userId = currentUser.get().getId();
 
 		// Read the scope and recent history before saving the new question, so history only holds earlier messages.
@@ -173,9 +177,19 @@ public class ChatService {
 		// original wording plus the history.
 		String searchQuery = generation.standaloneQuestion(history, text);
 		// A scoped chat whose documents were all deleted searches nothing (not everything).
-		List<Document> chunks = context.scoped() && context.documentIds().isEmpty()
-				? List.of()
-				: retrieval.search(userId, searchQuery, context.documentIds());
+		List<Document> chunks;
+		try {
+			chunks = context.scoped() && context.documentIds().isEmpty()
+					? List.of()
+					: retrieval.search(userId, searchQuery, context.documentIds());
+		}
+		catch (RuntimeException e) {
+			// Embedding the question failed (e.g. quota). Keep the chat consistent: the question gets a reply.
+			log.warn("Retrieval failed for session {}", sessionId, e);
+			AiServiceException friendly = AiServiceException.from(e);
+			saveReply(sessionId, note(friendly.getMessage()), List.of(), new AtomicBoolean());
+			throw friendly;
+		}
 		GenerationService.StreamingAnswer answer = generation.stream(text, history, chunks);
 
 		StringBuilder fullText = new StringBuilder();
@@ -183,27 +197,35 @@ public class ChatService {
 		return answer.tokens()
 				.doOnNext(fullText::append)
 				// Save on a worker thread (JPA blocks), and before the browser sees onComplete.
-				.concatWith(Mono.<String>fromRunnable(() -> saveReply(sessionId, fullText.toString(), answer, saved))
+				.concatWith(Mono.<String>fromRunnable(() -> saveReply(sessionId, fullText.toString(), answer.citations(), saved))
 					.subscribeOn(Schedulers.boundedElastic()))
-				.doOnCancel(() -> saveReply(sessionId, withNote(fullText, STOPPED_NOTE), answer, saved))
+				.doOnCancel(() -> saveReply(sessionId, withNote(fullText, STOPPED_NOTE), answer.citations(), saved))
 				.doOnError(error -> {
 					log.warn("Answer generation failed for session {}", sessionId, error);
-					saveReply(sessionId, withNote(fullText, ERROR_NOTE), answer, saved);
-				});
+					String reason = note(AiServiceException.from(error).getMessage());
+					saveReply(sessionId, withNote(fullText, reason), answer.citations(), saved);
+				})
+				// The browser gets the friendly message, not Google's raw error.
+				.onErrorMap(AiServiceException::from);
 	}
 
 	/** Saves the assistant's message once, whichever of complete / cancel / error happens first. */
-	private void saveReply(UUID sessionId, String text, GenerationService.StreamingAnswer answer, AtomicBoolean saved) {
+	private void saveReply(UUID sessionId, String text, List<Citation> allCitations, AtomicBoolean saved) {
 		if (!saved.compareAndSet(false, true)) {
 			return;
 		}
 		String content = text.isBlank() ? GenerationService.NO_ANSWER : text.strip();
-		String citations = json.writeValueAsString(GenerationService.citedOnly(content, answer.citations()));
+		String citations = json.writeValueAsString(GenerationService.citedOnly(content, allCitations));
 		// Runs outside the request thread, so no currentUser here; ask() already checked ownership.
 		transaction.executeWithoutResult(status -> sessions.findById(sessionId).ifPresent(session -> {
 			session.touch();
 			messages.save(new ChatMessage(session, MessageRole.ASSISTANT, content, citations));
 		}));
+	}
+
+	/** Formats a status note the way the chat shows it (italic, in parentheses). */
+	static String note(String message) {
+		return "_(" + message + ")_";
 	}
 
 	private static String withNote(StringBuilder partial, String note) {

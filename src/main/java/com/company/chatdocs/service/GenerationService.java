@@ -8,6 +8,8 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.metadata.Usage;
+import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.document.Document;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
@@ -16,6 +18,8 @@ import reactor.core.publisher.Flux;
 
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -94,16 +98,40 @@ public class GenerationService {
 
 		Flux<String> tokens = Flux.defer(() -> {
 			long start = System.currentTimeMillis();
+			AtomicLong firstPieceAt = new AtomicLong();
+			AtomicReference<Usage> usage = new AtomicReference<>();
 			return chatClient.prompt()
 					.system(system -> system.text(systemPrompt).param("context", context.text()))
 					.messages(toMessages(history))
 					.user(question)
 					.stream()
-					.content()
-					.doOnComplete(() -> log.info("Streamed answer from {} chunk(s) and {} history message(s) in {} ms",
-							chunks.size(), history.size(), System.currentTimeMillis() - start));
+					.chatResponse()
+					.doOnNext(response -> {
+						firstPieceAt.compareAndSet(0, System.currentTimeMillis());
+						// Gemini reports token counts on the last piece(s); keep the latest non-empty one.
+						Usage pieceUsage = response.getMetadata() == null ? null : response.getMetadata().getUsage();
+						if (pieceUsage != null && pieceUsage.getTotalTokens() != null && pieceUsage.getTotalTokens() > 0) {
+							usage.set(pieceUsage);
+						}
+					})
+					.mapNotNull(GenerationService::text)
+					.doOnComplete(() -> logAnswer(start, firstPieceAt.get(), usage.get(), chunks.size(), history.size()));
 		});
 		return new StreamingAnswer(tokens, context.citations());
+	}
+
+	private static String text(ChatResponse response) {
+		return response.getResult() == null ? null : response.getResult().getOutput().getText();
+	}
+
+	/** One line per answer: how long it took and how many tokens it used (to watch the free-tier budget). */
+	private static void logAnswer(long start, long firstPieceAt, Usage usage, int chunks, int historyMessages) {
+		long now = System.currentTimeMillis();
+		log.info("Answer: {} ms total, first text after {} ms | tokens: prompt={}, completion={}, total={} "
+				+ "| {} chunk(s), {} history message(s)",
+				now - start, firstPieceAt == 0 ? -1 : firstPieceAt - start,
+				usage == null ? "?" : usage.getPromptTokens(), usage == null ? "?" : usage.getCompletionTokens(),
+				usage == null ? "?" : usage.getTotalTokens(), chunks, historyMessages);
 	}
 
 	/** Keeps only the passages the model actually cited, so the sources shown match the text. */

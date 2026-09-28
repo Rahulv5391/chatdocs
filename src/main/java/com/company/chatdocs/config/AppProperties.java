@@ -26,11 +26,13 @@ public record AppProperties(
 	 * @param topK                how many chunks to retrieve per question
 	 * @param similarityThreshold minimum cosine similarity (0..1) for a chunk to count as relevant
 	 * @param historyMessages     how many earlier messages of the chat are sent along with a question
+	 * @param maxQuestionLength   longest question accepted, in characters
 	 */
 	public record Rag(
 			@DefaultValue("5") int topK,
 			@DefaultValue("0.55") double similarityThreshold,
-			@DefaultValue("6") int historyMessages) {
+			@DefaultValue("6") int historyMessages,
+			@DefaultValue("2000") int maxQuestionLength) {
 	}
 
 	/**

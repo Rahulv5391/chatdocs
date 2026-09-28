@@ -34,9 +34,15 @@ public class FakeEmbeddingModelConfiguration {
 		/** How many embedding calls were made, one per batch. */
 		public final AtomicInteger calls = new AtomicInteger();
 
+		/** If set, every embedding call fails with this (e.g. to simulate a Gemini quota error). */
+		public volatile RuntimeException failure;
+
 		@Override
 		public EmbeddingResponse call(EmbeddingRequest request) {
 			calls.incrementAndGet();
+			if (failure != null) {
+				throw failure;
+			}
 			List<Embedding> embeddings = new ArrayList<>();
 			for (int i = 0; i < request.getInstructions().size(); i++) {
 				embeddings.add(new Embedding(vector(request.getInstructions().get(i)), i));
@@ -46,6 +52,9 @@ public class FakeEmbeddingModelConfiguration {
 
 		@Override
 		public float[] embed(Document document) {
+			if (failure != null) {
+				throw failure;
+			}
 			return vector(document.getText());
 		}
 

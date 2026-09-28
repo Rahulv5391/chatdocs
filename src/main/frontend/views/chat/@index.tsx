@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router';
 import { ViewConfig } from '@vaadin/hilla-file-router/types.js';
 import { EndpointError } from '@vaadin/hilla-frontend';
 import { Button, ConfirmDialog, Dialog, Grid, GridColumn, Notification } from '@vaadin/react-components';
-import { ChatService } from 'Frontend/generated/endpoints';
+import { ChatService, DocumentService } from 'Frontend/generated/endpoints';
+import DocumentStatus from 'Frontend/generated/com/company/chatdocs/entity/DocumentStatus';
 import type ChatSessionDto from 'Frontend/generated/com/company/chatdocs/dto/ChatSessionDto';
 import DocumentScopePicker from 'Frontend/components/DocumentScopePicker';
 
@@ -23,11 +24,13 @@ export default function ChatIndexView() {
   const [toDelete, setToDelete] = useState<ChatSessionDto>();
   const [creating, setCreating] = useState(false);
   const [scope, setScope] = useState<string[]>([]);
+  const [readyDocuments, setReadyDocuments] = useState<number>();
 
   const refresh = useCallback(() => ChatService.listSessions().then(setSessions), []);
 
   useEffect(() => {
     refresh();
+    DocumentService.list().then((all) => setReadyDocuments(all.filter((d) => d.status === DocumentStatus.READY).length));
   }, [refresh]);
 
   async function createChat() {
@@ -66,6 +69,15 @@ export default function ChatIndexView() {
           New chat
         </Button>
       </div>
+      {readyDocuments === 0 && (
+        <p>
+          You have no ready documents yet, so answers will be empty.{' '}
+          <a href="/documents" onClick={(e) => { e.preventDefault(); navigate('/documents'); }}>
+            Upload documents first
+          </a>
+          .
+        </p>
+      )}
       {sessions.length === 0 ? (
         <p>No chats yet. Start one with "New chat".</p>
       ) : (
@@ -102,7 +114,7 @@ export default function ChatIndexView() {
           </>
         }
       >
-        <div style={{ width: 'min(28rem, 80vw)' }}>
+        <div style={{ width: 'min(28rem, 80vw)', minHeight: '10rem' }}>
           <p style={{ marginTop: 0 }}>Choose which documents this chat may answer from.</p>
           {creating && <DocumentScopePicker onChange={setScope} />}
         </div>

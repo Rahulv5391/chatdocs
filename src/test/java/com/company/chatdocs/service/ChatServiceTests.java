@@ -11,6 +11,7 @@ import com.company.chatdocs.entity.AppUser;
 import com.company.chatdocs.entity.ChatSession;
 import com.company.chatdocs.entity.Document;
 import com.company.chatdocs.entity.MessageRole;
+import com.company.chatdocs.exception.AiServiceException;
 import com.company.chatdocs.exception.ChatSessionNotFoundException;
 import com.company.chatdocs.exception.InvalidInputException;
 import com.company.chatdocs.repository.AppUserRepository;
@@ -69,9 +70,13 @@ class ChatServiceTests {
 	@Autowired
 	FakeChatModel chatModel;
 
+	@Autowired
+	FakeEmbeddingModelConfiguration.FakeEmbeddingModel embeddingModel;
+
 	@BeforeEach
 	void resetFakes() {
 		chatModel.reset();
+		embeddingModel.failure = null;
 	}
 
 	@AfterEach
@@ -136,15 +141,16 @@ class ChatServiceTests {
 	}
 
 	@Test
-	void failedGenerationSavesAnErrorNoteAndReportsTheError() {
+	void failedGenerationSavesANoteAndReportsAFriendlyError() {
 		ingest(user("demo"), "leave.txt", "Leave policy: employees get 24 days of annual leave.");
 		chatModel.failure = new IllegalStateException("Gemini is down");
 		UUID sessionId = chatService.createSession(List.of()).id();
 
 		assertThatThrownBy(() -> chatService.ask(sessionId, "annual leave days").blockLast(Duration.ofSeconds(10)))
-				.hasMessageContaining("Gemini is down");
+				.hasMessage(AiServiceException.UNAVAILABLE_MESSAGE);
 
-		assertThat(chatService.getMessages(sessionId).getLast().content()).endsWith(ChatService.ERROR_NOTE);
+		assertThat(chatService.getMessages(sessionId).getLast().content())
+				.endsWith(ChatService.note(com.company.chatdocs.exception.AiServiceException.UNAVAILABLE_MESSAGE));
 	}
 
 	@Test
@@ -227,6 +233,42 @@ class ChatServiceTests {
 		assertThatThrownBy(() -> chatService.createSession(List.of(aliceDoc)))
 				.isInstanceOf(com.company.chatdocs.exception.DocumentNotFoundException.class);
 		assertThat(sessions.count()).isZero();
+	}
+
+	@Test
+	void quotaErrorWhileAnsweringGivesAFriendlyMessage() {
+		ingest(user("demo"), "leave.txt", "Leave policy: employees get 24 days of annual leave.");
+		chatModel.failure = new RuntimeException("429 . Resource has been exhausted (e.g. check quota).");
+		UUID sessionId = chatService.createSession(List.of()).id();
+
+		assertThatThrownBy(() -> chatService.ask(sessionId, "annual leave days").blockLast(Duration.ofSeconds(10)))
+				.isInstanceOf(AiServiceException.class)
+				.hasMessage(AiServiceException.QUOTA_MESSAGE);
+		assertThat(chatService.getMessages(sessionId).getLast().content())
+				.endsWith(ChatService.note(AiServiceException.QUOTA_MESSAGE));
+	}
+
+	@Test
+	void embeddingFailureDuringRetrievalStillAnswersTheQuestion() {
+		UUID sessionId = chatService.createSession(List.of()).id();
+		embeddingModel.failure = new IllegalStateException("503 Service Unavailable");
+
+		assertThatThrownBy(() -> chatService.ask(sessionId, "annual leave days"))
+				.isInstanceOf(AiServiceException.class)
+				.hasMessage(AiServiceException.UNAVAILABLE_MESSAGE);
+		// The question isn't left without a reply.
+		assertThat(chatService.getMessages(sessionId)).extracting(ChatMessageDto::role)
+				.containsExactly(MessageRole.USER, MessageRole.ASSISTANT);
+	}
+
+	@Test
+	void tooLongQuestionIsRejected() {
+		UUID sessionId = chatService.createSession(List.of()).id();
+
+		assertThatThrownBy(() -> chatService.ask(sessionId, "x".repeat(2001)))
+				.isInstanceOf(InvalidInputException.class)
+				.hasMessageContaining("2000 characters");
+		assertThat(chatService.getMessages(sessionId)).isEmpty();
 	}
 
 	@Test

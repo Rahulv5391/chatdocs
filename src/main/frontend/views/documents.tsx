@@ -148,7 +148,9 @@ export default function DocumentsView() {
           )}
         </GridColumn>
       </Grid>
-      {documents.length === 0 && <p>No documents yet.</p>}
+      {documents.length === 0 && (
+        <p>No documents yet. Upload a PDF, DOCX, TXT or MD file above, then ask questions about it in Chat.</p>
+      )}
       <ConfirmDialog
         opened={!!toDelete}
         header="Delete document?"
