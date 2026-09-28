@@ -59,6 +59,8 @@ that library, and every answer includes clickable source citations that open the
 | **Flyway Java migration as a Spring bean** | `V8` copies files from the old upload folder into `document_file` once |
 | **Spring Boot Testcontainers** | Integration tests against a real pgvector database |
 | **Spring Boot DevTools** | Hot reload in development |
+| **Spring Boot Actuator** | Health endpoints for the hosting platform (`/actuator/health/liveness`, `/readiness`) |
+| **Spring profiles** | `dev` (default: Docker Compose database, demo users) and `prod` (database from environment variables, pool tuned for Neon) |
 
 ## Architecture
 
@@ -301,6 +303,37 @@ Tests use fake chat and embedding models, so they work offline and use no API qu
 
 ```bash
 ./mvnw test -Dtest='GeminiSmokeTests,VectorStoreSmokeTests' -Dexternal=true
+```
+
+## Deploy (Docker, e.g. Render + Neon)
+
+The `Dockerfile` builds a production image (backend + pre-built frontend). It runs with the `prod` profile, which
+reads the database from environment variables and creates no demo users.
+
+1. **Database:** create a PostgreSQL database with the `vector`, `hstore` and `uuid-ossp` extensions available (Neon's
+   free plan works). Use the **direct (non-pooled)** connection: Flyway needs session features that PgBouncer's
+   transaction mode doesn't support, and the app pools its own connections. Flyway creates all tables on first start.
+2. **App:** on Render, create a *Web Service* from this repository with the *Docker* runtime and set:
+
+   | Variable | Example |
+   |---|---|
+   | `DB_URL` | `jdbc:postgresql://<host>/<database>?sslmode=require` |
+   | `DB_USERNAME` | database user |
+   | `DB_PASSWORD` | database password |
+   | `GEMINI_API_KEY` | your Gemini key |
+
+   `PORT` is set by Render and picked up automatically (`server.port=${PORT:8080}`).
+3. **Health check path:** `/actuator/health/liveness`. It needs no login and never touches the database, so it's also
+   the right URL for a keep-alive ping; `/actuator/health` checks the database too.
+
+Uploaded files are stored in PostgreSQL, so no persistent disk is needed. The `prod` profile closes idle database
+connections after a minute and sends no keep-alive queries, so a Neon database can scale to zero between visits.
+
+To try the image locally:
+
+```bash
+docker build -t chatdocs .
+docker run -p 8080:8080 -e DB_URL=... -e DB_USERNAME=... -e DB_PASSWORD=... -e GEMINI_API_KEY=... chatdocs
 ```
 
 ## Demo script

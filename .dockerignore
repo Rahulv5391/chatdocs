@@ -1,0 +1,16 @@
+# Secrets and local data never go into the image
+.env
+data/
+
+# Build output and caches (rebuilt inside the image)
+target/
+node_modules/
+src/main/frontend/generated/
+vite.generated.ts
+
+# Not needed for the build
+.git/
+.idea/
+*.md
+compose.yaml
+mvnw.cmd

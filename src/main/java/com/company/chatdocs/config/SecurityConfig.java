@@ -20,7 +20,10 @@ public class SecurityConfig {
 	SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
 		// Our own REST controllers (e.g. file downloads) need a logged-in user; they check ownership themselves.
 		// Vaadin doesn't know these paths, so without this rule it denies them (403).
-		http.authorizeHttpRequests(auth -> auth.requestMatchers("/api/**").authenticated());
+		// Health checks (hosting platform, keep-alive pings) must work without a login; they only report UP/DOWN.
+		http.authorizeHttpRequests(auth -> auth
+				.requestMatchers("/api/**").authenticated()
+				.requestMatchers("/actuator/health", "/actuator/health/**").permitAll());
 		// Vaadin permits its static resources and the login view, and protects everything else.
 		http.with(VaadinSecurityConfigurer.vaadin(), vaadin -> vaadin.loginView("/login"));
 		return http.build();
