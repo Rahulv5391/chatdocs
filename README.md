@@ -62,8 +62,9 @@ Tests use fake chat and embedding models, so they work offline and use no API qu
 
 1. Log in as `demo`.
 2. **Documents** → upload a PDF with a few pages of distinct facts (for example an HR policy). The badge goes *Queued → Processing → Ready* and shows the chunk count.
-3. **Chat → New chat** → leave *Documents* empty (= all documents) → *Start chat*.
-4. Ask *"How many days of annual leave do interns get?"*. The answer streams in and ends with a chip like `[1] hr-policies.pdf · p.1`.
+3. **New chat** (the start screen) → leave the document picker on *All documents*, or pick some.
+4. Ask *"How many days of annual leave do interns get?"*. A typing indicator shows while the documents are searched,
+   then the answer types out and ends with a source chip like `1 hr-policies.pdf · p.1`.
 5. Hover the chip to see the passage; click it to open the PDF at that page.
 6. Ask a follow-up: *"and for full-time employees?"*. It's understood from the conversation.
 7. Ask something off-topic: *"What is the capital of France?"* → *"I couldn't find that in your documents."*

@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { type FormEvent, useState } from 'react';
 import { Navigate, useLocation } from 'react-router';
 import { ViewConfig } from '@vaadin/hilla-file-router/types.js';
-import { LoginForm } from '@vaadin/react-components';
+import { PasswordField, TextField } from '@vaadin/react-components';
 import { useAuth } from 'Frontend/auth';
+import { SparkIcon } from 'Frontend/components/Icons';
 
 export const config: ViewConfig = {
   title: 'Log in',
@@ -19,6 +20,8 @@ function samePagePath(url: string) {
 export default function LoginView() {
   const { state, login } = useAuth();
   const location = useLocation();
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [hasError, setHasError] = useState(false);
   const [redirectTo, setRedirectTo] = useState<string>();
   // login() marks the user as logged in before it returns the redirect URL; wait for both.
@@ -30,26 +33,51 @@ export default function LoginView() {
     return <Navigate to={redirectTo ?? from ?? '/'} replace />;
   }
 
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!username || !password) return;
+    setLoggingIn(true);
+    try {
+      // No page reload: this view decides where to go (Hilla would otherwise reload to "/").
+      const { error, redirectUrl } = await login(username, password, { navigate: () => {} });
+      setHasError(!!error);
+      if (!error && redirectUrl) {
+        setRedirectTo(samePagePath(redirectUrl));
+      }
+    } finally {
+      setLoggingIn(false);
+    }
+  }
+
   return (
-    <main style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: '10vh' }}>
-      <h1>Chat with my docs</h1>
-      <LoginForm
-        error={hasError}
-        noForgotPassword
-        onLogin={async ({ detail: { username, password } }) => {
-          setLoggingIn(true);
-          try {
-            // No page reload: this view decides where to go (Hilla would otherwise reload to "/").
-            const { error, redirectUrl } = await login(username, password, { navigate: () => {} });
-            setHasError(!!error);
-            if (!error && redirectUrl) {
-              setRedirectTo(samePagePath(redirectUrl));
-            }
-          } finally {
-            setLoggingIn(false);
-          }
-        }}
-      />
+    <main className="login-page">
+      <div className="login-card">
+        <span className="brand-mark lg">
+          <SparkIcon size={26} />
+        </span>
+        <h1>Welcome to DocChat</h1>
+        <p className="subtitle">Chat with your documents. Sign in to continue.</p>
+        <form onSubmit={submit}>
+          {hasError && <div className="login-error">Incorrect username or password.</div>}
+          <TextField
+            label="Username"
+            autocomplete="username"
+            autofocus
+            value={username}
+            onValueChanged={(e) => setUsername(e.detail.value)}
+          />
+          <PasswordField
+            label="Password"
+            autocomplete="current-password"
+            value={password}
+            onValueChanged={(e) => setPassword(e.detail.value)}
+            onKeyDown={(e) => e.key === 'Enter' && submit(e)}
+          />
+          <button type="submit" className="btn primary" disabled={loggingIn || !username || !password}>
+            {loggingIn ? 'Signing in…' : 'Sign in'}
+          </button>
+        </form>
+      </div>
     </main>
   );
 }

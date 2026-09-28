@@ -1,126 +1,116 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { ViewConfig } from '@vaadin/hilla-file-router/types.js';
-import { Button, ConfirmDialog, Dialog, Grid, GridColumn } from '@vaadin/react-components';
 import { ChatService, DocumentService } from 'Frontend/generated/endpoints';
+import type DocumentDto from 'Frontend/generated/com/company/chatdocs/dto/DocumentDto';
 import DocumentStatus from 'Frontend/generated/com/company/chatdocs/entity/DocumentStatus';
-import type ChatSessionDto from 'Frontend/generated/com/company/chatdocs/dto/ChatSessionDto';
+import { useAuth } from 'Frontend/auth';
+import Composer from 'Frontend/components/Composer';
 import DocumentScopePicker from 'Frontend/components/DocumentScopePicker';
+import { useChatSessions } from 'Frontend/components/ChatSessions';
+import { AlertIcon, SparkIcon } from 'Frontend/components/Icons';
 import { errorMessage, showError } from 'Frontend/util/notifications';
 
 export const config: ViewConfig = {
-  title: 'Chat',
-  menu: { order: 2 },
+  title: 'New chat',
 };
 
-export default function ChatIndexView() {
-  const navigate = useNavigate();
-  const [sessions, setSessions] = useState<ChatSessionDto[]>([]);
-  const [toDelete, setToDelete] = useState<ChatSessionDto>();
-  const [creating, setCreating] = useState(false);
-  const [scope, setScope] = useState<string[]>([]);
-  const [readyDocuments, setReadyDocuments] = useState<number>();
+function greeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 18) return 'Good afternoon';
+  return 'Good evening';
+}
 
-  const refresh = useCallback(() => ChatService.listSessions().then(setSessions), []);
+function suggestionsFor(documents: DocumentDto[]) {
+  const [first, second] = documents.map((d) => d.fileName);
+  if (!first) return [];
+  return [
+    `Summarize ${first} in a few bullet points`,
+    `What are the most important rules in ${second ?? first}?`,
+    'List any amounts, limits or deadlines mentioned in my documents',
+    'What should a new employee know first?',
+  ];
+}
+
+/** The start screen: pick documents, ask the first question, and the chat is created with it. */
+export default function NewChatView() {
+  const navigate = useNavigate();
+  const { state } = useAuth();
+  const { refresh } = useChatSessions();
+  const [readyDocuments, setReadyDocuments] = useState<DocumentDto[]>();
+  const [scope, setScope] = useState<string[]>([]);
+  const [starting, setStarting] = useState(false);
 
   useEffect(() => {
-    refresh();
-    DocumentService.list().then((all) => setReadyDocuments(all.filter((d) => d.status === DocumentStatus.READY).length));
-  }, [refresh]);
+    DocumentService.list().then((all) => setReadyDocuments(all.filter((d) => d.status === DocumentStatus.READY)));
+  }, []);
 
-  async function createChat() {
-    setCreating(false);
+  async function start(question: string) {
+    setStarting(true);
     try {
       const session = await ChatService.createSession(scope);
-      navigate(`/chat/${session.id}`);
+      await refresh();
+      navigate(`/chat/${session.id}`, { state: { question } });
     } catch (e) {
-      showError(errorMessage(e, 'Could not create a chat.'));
+      showError(errorMessage(e, 'Could not start the chat.'));
+      setStarting(false);
     }
   }
 
-  async function confirmDelete() {
-    if (!toDelete) return;
-    const session = toDelete;
-    setToDelete(undefined);
-    try {
-      await ChatService.deleteSession(session.id);
-    } catch (e) {
-      showError(errorMessage(e, 'Could not delete the chat.'));
-    } finally {
-      await refresh();
-    }
-  }
+  const firstName = state.user?.displayName.split(' ')[0];
 
   return (
-    <main style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-      <div>
-        <Button
-          theme="primary"
-          onClick={() => {
-            setScope([]);
-            setCreating(true);
-          }}
-        >
-          New chat
-        </Button>
-      </div>
-      {readyDocuments === 0 && (
-        <p>
-          You have no ready documents yet, so answers will be empty.{' '}
-          <Link to="/documents">Upload documents first</Link>
-          .
-        </p>
-      )}
-      {sessions.length === 0 ? (
-        <p>No chats yet. Start one with "New chat".</p>
-      ) : (
-        <Grid items={sessions} allRowsVisible={sessions.length < 20}>
-          <GridColumn header="Chat" flexGrow={3}>
-            {({ item }: { item: ChatSessionDto }) => (
-              <Link to={`/chat/${item.id}`}>{item.title}</Link>
+    <main className="welcome">
+      <div className="welcome-inner">
+        <div className="welcome-hero">
+          <span className="brand-mark lg">
+            <SparkIcon size={26} />
+          </span>
+          <h1>
+            {greeting()}
+            {firstName && (
+              <>
+                , <span className="gradient-text">{firstName}</span>
+              </>
             )}
-          </GridColumn>
-          <GridColumn header="Last activity" autoWidth>
-            {({ item }: { item: ChatSessionDto }) => new Date(item.updatedAt).toLocaleString()}
-          </GridColumn>
-          <GridColumn autoWidth flexGrow={0}>
-            {({ item }: { item: ChatSessionDto }) => (
-              <Button theme="error tertiary small" onClick={() => setToDelete(item)}>
-                Delete
-              </Button>
-            )}
-          </GridColumn>
-        </Grid>
-      )}
-      <Dialog
-        headerTitle="New chat"
-        opened={creating}
-        onOpenedChanged={(e) => setCreating(e.detail.value)}
-        footer={
-          <>
-            <Button onClick={() => setCreating(false)}>Cancel</Button>
-            <Button theme="primary" onClick={createChat}>
-              Start chat
-            </Button>
-          </>
-        }
-      >
-        <div style={{ width: 'min(28rem, 80vw)', minHeight: '10rem' }}>
-          <p style={{ marginTop: 0 }}>Choose which documents this chat may answer from.</p>
-          {creating && <DocumentScopePicker onChange={setScope} />}
+          </h1>
+          <p>Ask anything. Answers come only from your documents, with sources.</p>
         </div>
-      </Dialog>
-      <ConfirmDialog
-        opened={!!toDelete}
-        header="Delete chat?"
-        cancelButtonVisible
-        confirmText="Delete"
-        confirmTheme="error primary"
-        onConfirm={confirmDelete}
-        onCancel={() => setToDelete(undefined)}
-      >
-        {toDelete && `"${toDelete.title}" and all its messages will be permanently deleted.`}
-      </ConfirmDialog>
+
+        {readyDocuments?.length === 0 && (
+          <div className="notice">
+            <AlertIcon size={18} />
+            <span>
+              You have no ready documents yet, so there is nothing to answer from.{' '}
+              <Link to="/documents">Upload documents</Link> first.
+            </span>
+          </div>
+        )}
+
+        <div className="composer-wrap">
+          <Composer
+            onSend={start}
+            busy={starting}
+            placeholder="Ask a question about your documents…"
+            tools={
+              readyDocuments &&
+              readyDocuments.length > 0 && <DocumentScopePicker documents={readyDocuments} onChange={setScope} />
+            }
+          />
+        </div>
+
+        {!starting && (
+          <div className="suggestions">
+            {suggestionsFor(readyDocuments ?? []).map((suggestion) => (
+              <button key={suggestion} className="suggestion" onClick={() => start(suggestion)}>
+                <SparkIcon size={15} />
+                {suggestion}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     </main>
   );
 }
