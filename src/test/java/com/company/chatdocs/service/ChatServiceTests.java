@@ -17,6 +17,7 @@ import com.company.chatdocs.exception.InvalidInputException;
 import com.company.chatdocs.repository.AppUserRepository;
 import com.company.chatdocs.repository.ChatMessageRepository;
 import com.company.chatdocs.repository.ChatSessionRepository;
+import com.company.chatdocs.repository.DocumentFileRepository;
 import com.company.chatdocs.repository.DocumentRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,7 +39,7 @@ import static org.assertj.core.groups.Tuple.tuple;
 
 /** Uses fake embedding and chat models, so no Gemini quota is used. */
 @Import({ TestcontainersConfiguration.class, FakeEmbeddingModelConfiguration.class, FakeChatModelConfiguration.class })
-@SpringBootTest(properties = { "app.storage-dir=target/test-uploads", "app.rag.similarity-threshold=0.1" })
+@SpringBootTest(properties = { "app.rag.similarity-threshold=0.1" })
 @ActiveProfiles("dev")
 @WithMockUser(username = "demo")
 class ChatServiceTests {
@@ -62,7 +63,7 @@ class ChatServiceTests {
 	AppUserRepository users;
 
 	@Autowired
-	FileStorageService storage;
+	DocumentFileRepository files;
 
 	@Autowired
 	JdbcTemplate jdbc;
@@ -82,7 +83,6 @@ class ChatServiceTests {
 	@AfterEach
 	void cleanUp() {
 		sessions.deleteAll();
-		documents.findAll().forEach(document -> storage.delete(document.getStoragePath()));
 		documents.deleteAll();
 		jdbc.update("delete from vector_store");
 	}
@@ -379,7 +379,7 @@ class ChatServiceTests {
 	}
 
 	private UUID ingest(AppUser owner, String fileName, String text) {
-		UUID id = TestDocuments.saveText(storage, documents, owner, fileName, text).getId();
+		UUID id = TestDocuments.saveText(documents, files, owner, fileName, text).getId();
 		ingestionService.ingest(id);
 		return id;
 	}

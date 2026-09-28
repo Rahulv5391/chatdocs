@@ -4,11 +4,13 @@ import com.company.chatdocs.config.AppProperties;
 import com.company.chatdocs.dto.DocumentDto;
 import com.company.chatdocs.entity.AppUser;
 import com.company.chatdocs.entity.Document;
+import com.company.chatdocs.entity.DocumentFile;
 import com.company.chatdocs.entity.DocumentStatus;
 import com.company.chatdocs.event.DocumentUploadedEvent;
 import com.company.chatdocs.exception.DocumentNotFoundException;
 import com.company.chatdocs.exception.InvalidDocumentStateException;
 import com.company.chatdocs.exception.UploadRejectedException;
+import com.company.chatdocs.repository.DocumentFileRepository;
 import com.company.chatdocs.repository.DocumentRepository;
 import com.vaadin.hilla.BrowserCallable;
 import jakarta.annotation.security.PermitAll;
@@ -41,16 +43,16 @@ public class DocumentService {
 
 	private final DocumentRepository documents;
 	private final CurrentUser currentUser;
-	private final FileStorageService storage;
+	private final DocumentFileRepository files;
 	private final AppProperties properties;
 	private final ApplicationEventPublisher events;
 	private final IngestionService ingestion;
 
-	DocumentService(DocumentRepository documents, CurrentUser currentUser, FileStorageService storage,
+	DocumentService(DocumentRepository documents, DocumentFileRepository files, CurrentUser currentUser,
 			AppProperties properties, ApplicationEventPublisher events, IngestionService ingestion) {
 		this.documents = documents;
+		this.files = files;
 		this.currentUser = currentUser;
-		this.storage = storage;
 		this.properties = properties;
 		this.events = events;
 		this.ingestion = ingestion;
@@ -65,7 +67,7 @@ public class DocumentService {
 	}
 
 	/**
-	 * Validates the file, saves it to disk and creates a document row with status UPLOADED.
+	 * Validates the file and saves it, together with a document row with status UPLOADED, in one transaction.
 	 * Ingestion then runs in the background.
 	 *
 	 * @throws UploadRejectedException with a user-friendly message if the file is not accepted
@@ -93,23 +95,17 @@ public class DocumentService {
 			throw new UploadRejectedException("You have already uploaded this file.");
 		}
 
-		String storagePath = storage.save(owner.getId(), extension, content);
-		try {
-			Document document = documents.saveAndFlush(new Document(owner, fileName, ALLOWED_TYPES.get(extension),
-					content.length, storagePath, checksum));
-			// IngestionService picks this up after the transaction commits.
-			events.publishEvent(new DocumentUploadedEvent(document.getId()));
-			return DocumentDto.from(document);
-		}
-		catch (RuntimeException e) {
-			// Don't leave a file on disk without a matching row.
-			storage.delete(storagePath);
-			throw e;
-		}
+		Document document = documents.saveAndFlush(
+				new Document(owner, fileName, ALLOWED_TYPES.get(extension), content.length, checksum));
+		files.save(new DocumentFile(document.getId(), content));
+		// IngestionService picks this up after the transaction commits.
+		events.publishEvent(new DocumentUploadedEvent(document.getId()));
+		return DocumentDto.from(document);
 	}
 
 	/**
-	 * Deletes one of the logged-in user's documents: the row, its chunks in the vector store, then the file.
+	 * Deletes one of the logged-in user's documents: the row (the database deletes its file with it) and its chunks
+	 * in the vector store, all in one transaction.
 	 *
 	 * @throws DocumentNotFoundException if the id doesn't exist or belongs to another user
 	 */
@@ -117,11 +113,8 @@ public class DocumentService {
 	public void delete(@NonNull UUID id) {
 		Document document = ownDocument(id);
 		documents.delete(document);
-		// Flush so a database error happens before the file is gone; a failed file delete rolls the row back.
-		documents.flush();
 		// The vector store uses the same database connection, so this is part of the same transaction.
 		ingestion.deleteChunks(id);
-		storage.delete(document.getStoragePath());
 	}
 
 	/**

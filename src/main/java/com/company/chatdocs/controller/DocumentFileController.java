@@ -1,11 +1,10 @@
 package com.company.chatdocs.controller;
 
 import com.company.chatdocs.entity.Document;
+import com.company.chatdocs.entity.DocumentFile;
+import com.company.chatdocs.repository.DocumentFileRepository;
 import com.company.chatdocs.repository.DocumentRepository;
 import com.company.chatdocs.service.CurrentUser;
-import com.company.chatdocs.service.FileStorageService;
-import org.springframework.core.io.FileSystemResource;
-import org.springframework.core.io.Resource;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -15,8 +14,6 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.UUID;
 
 /**
@@ -28,23 +25,20 @@ import java.util.UUID;
 public class DocumentFileController {
 
 	private final DocumentRepository documents;
+	private final DocumentFileRepository files;
 	private final CurrentUser currentUser;
-	private final FileStorageService storage;
 
-	DocumentFileController(DocumentRepository documents, CurrentUser currentUser, FileStorageService storage) {
+	DocumentFileController(DocumentRepository documents, DocumentFileRepository files, CurrentUser currentUser) {
 		this.documents = documents;
+		this.files = files;
 		this.currentUser = currentUser;
-		this.storage = storage;
 	}
 
 	@GetMapping("/api/documents/{id}/file")
-	public ResponseEntity<Resource> file(@PathVariable UUID id) {
+	public ResponseEntity<byte[]> file(@PathVariable UUID id) {
 		Document document = documents.findByIdAndOwnerId(id, currentUser.get().getId()).orElse(null);
-		if (document == null) {
-			return ResponseEntity.notFound().build();
-		}
-		Path path = storage.resolve(document.getStoragePath());
-		if (!Files.exists(path)) {
+		DocumentFile file = document == null ? null : files.findById(id).orElse(null);
+		if (file == null) {
 			return ResponseEntity.notFound().build();
 		}
 		return ResponseEntity.ok()
@@ -54,7 +48,7 @@ public class DocumentFileController {
 						.filename(document.getFileName(), StandardCharsets.UTF_8)
 						.build()
 						.toString())
-				.body(new FileSystemResource(path));
+				.body(file.getContent());
 	}
 
 }

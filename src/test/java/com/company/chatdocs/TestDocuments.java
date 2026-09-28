@@ -2,9 +2,10 @@ package com.company.chatdocs;
 
 import com.company.chatdocs.entity.AppUser;
 import com.company.chatdocs.entity.Document;
+import com.company.chatdocs.entity.DocumentFile;
 import com.company.chatdocs.entity.DocumentStatus;
+import com.company.chatdocs.repository.DocumentFileRepository;
 import com.company.chatdocs.repository.DocumentRepository;
-import com.company.chatdocs.service.FileStorageService;
 
 import java.util.HexFormat;
 import java.util.UUID;
@@ -18,11 +19,13 @@ public final class TestDocuments {
 	private TestDocuments() {
 	}
 
-	/** Stores a text file and its document row directly, skipping upload validation and ingestion. */
-	public static Document saveText(FileStorageService storage, DocumentRepository documents, AppUser owner,
+	/** Stores a text document row and its file directly, skipping upload validation and ingestion. */
+	public static Document saveText(DocumentRepository documents, DocumentFileRepository files, AppUser owner,
 			String fileName, String text) {
-		String path = storage.save(owner.getId(), "txt", text.getBytes());
-		return documents.save(new Document(owner, fileName, "text/plain", text.length(), path, randomChecksum()));
+		Document document = documents.save(
+				new Document(owner, fileName, "text/plain", text.length(), randomChecksum()));
+		files.save(new DocumentFile(document.getId(), text.getBytes()));
+		return document;
 	}
 
 	/** Waits up to 15 seconds for background ingestion to end in READY or FAILED. */

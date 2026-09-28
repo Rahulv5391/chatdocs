@@ -4,20 +4,17 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 import org.springframework.util.unit.DataSize;
 
-import java.nio.file.Path;
 import java.time.Duration;
 
 /**
  * App-specific settings from the {@code app.*} properties.
  *
- * @param storageDir    folder where uploaded files are saved
  * @param maxUploadSize largest file a user may upload
  * @param ingestion     how uploaded files are split into chunks
  * @param rag           how chunks are retrieved for a question
  */
 @ConfigurationProperties("app")
 public record AppProperties(
-		@DefaultValue("./data/uploads") Path storageDir,
 		@DefaultValue("20MB") DataSize maxUploadSize,
 		@DefaultValue Ingestion ingestion,
 		@DefaultValue Rag rag) {

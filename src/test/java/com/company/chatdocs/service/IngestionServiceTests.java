@@ -6,6 +6,7 @@ import com.company.chatdocs.TestDocuments;
 import com.company.chatdocs.TestcontainersConfiguration;
 import com.company.chatdocs.entity.Document;
 import com.company.chatdocs.entity.DocumentStatus;
+import com.company.chatdocs.repository.AppUserRepository;
 import com.company.chatdocs.repository.DocumentRepository;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
@@ -35,7 +36,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Embeddings come from the fake model; batch size 3 makes batching visible with small files.
  */
 @Import({ TestcontainersConfiguration.class, FakeEmbeddingModelConfiguration.class })
-@SpringBootTest(properties = { "app.storage-dir=target/test-uploads", "app.ingestion.pause-between-batches=0s",
+@SpringBootTest(properties = { "app.ingestion.pause-between-batches=0s",
 		"app.ingestion.batch-size=3", "app.ingestion.chunk-size=100" })
 @ActiveProfiles("dev")
 @WithMockUser(username = "demo")
@@ -48,7 +49,10 @@ class IngestionServiceTests {
 	DocumentRepository documents;
 
 	@Autowired
-	FileStorageService storage;
+	IngestionService ingestionService;
+
+	@Autowired
+	AppUserRepository users;
 
 	@Autowired
 	JdbcTemplate jdbc;
@@ -58,7 +62,6 @@ class IngestionServiceTests {
 
 	@AfterEach
 	void cleanUp() {
-		documents.findAll().forEach(document -> storage.delete(document.getStoragePath()));
 		documents.deleteAll();
 		jdbc.update("delete from vector_store");
 	}
@@ -125,6 +128,18 @@ class IngestionServiceTests {
 
 		assertThat(document.getStatus()).isEqualTo(DocumentStatus.FAILED);
 		assertThat(document.getErrorMessage()).startsWith("No extractable text");
+	}
+
+	@Test
+	void missingOriginalFileFailsWithClearMessage() {
+		var demo = users.findByUsername("demo").orElseThrow();
+		Document document = documents.save(new Document(demo, "gone.txt", "text/plain", 4, "0".repeat(64)));
+
+		ingestionService.ingest(document.getId());
+
+		Document after = documents.findById(document.getId()).orElseThrow();
+		assertThat(after.getStatus()).isEqualTo(DocumentStatus.FAILED);
+		assertThat(after.getErrorMessage()).isEqualTo("The original file is missing. Please upload it again.");
 	}
 
 	private List<Map<String, Object>> chunkRows(Document document) {

@@ -6,6 +6,7 @@ import com.company.chatdocs.TestcontainersConfiguration;
 import com.company.chatdocs.entity.AppUser;
 import com.company.chatdocs.entity.DocumentStatus;
 import com.company.chatdocs.repository.AppUserRepository;
+import com.company.chatdocs.repository.DocumentFileRepository;
 import com.company.chatdocs.repository.DocumentRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -28,7 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * whatever the question or document scope. Embeddings come from the fake model (no Gemini quota).
  */
 @Import({ TestcontainersConfiguration.class, FakeEmbeddingModelConfiguration.class })
-@SpringBootTest(properties = { "app.storage-dir=target/test-uploads", "app.ingestion.pause-between-batches=0s",
+@SpringBootTest(properties = { "app.ingestion.pause-between-batches=0s",
 		"app.rag.similarity-threshold=0.1" })
 @ActiveProfiles("dev")
 class RetrievalServiceTests {
@@ -46,7 +47,7 @@ class RetrievalServiceTests {
 	AppUserRepository users;
 
 	@Autowired
-	FileStorageService storage;
+	DocumentFileRepository files;
 
 	@Autowired
 	JdbcTemplate jdbc;
@@ -68,7 +69,6 @@ class RetrievalServiceTests {
 
 	@AfterEach
 	void cleanUp() {
-		documents.findAll().forEach(document -> storage.delete(document.getStoragePath()));
 		documents.deleteAll();
 		jdbc.update("delete from vector_store");
 	}
@@ -118,7 +118,7 @@ class RetrievalServiceTests {
 	}
 
 	private UUID ingest(AppUser owner, String fileName, String text) {
-		UUID id = TestDocuments.saveText(storage, documents, owner, fileName, text).getId();
+		UUID id = TestDocuments.saveText(documents, files, owner, fileName, text).getId();
 		ingestionService.ingest(id);
 		assertThat(documents.findById(id).orElseThrow().getStatus()).isEqualTo(DocumentStatus.READY);
 		return id;

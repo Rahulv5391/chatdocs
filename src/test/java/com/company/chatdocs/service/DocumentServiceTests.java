@@ -34,8 +34,8 @@ class DocumentServiceTests {
 	void createDocuments() {
 		var demo = users.findByUsername("demo").orElseThrow();
 		var alice = users.findByUsername("alice").orElseThrow();
-		documents.save(new Document(demo, "demo-notes.pdf", "application/pdf", 1234, "x/1.pdf", "a".repeat(64)));
-		documents.save(new Document(alice, "alice-plan.txt", "text/plain", 99, "x/2.txt", "b".repeat(64)));
+		documents.save(new Document(demo, "demo-notes.pdf", "application/pdf", 1234, "a".repeat(64)));
+		documents.save(new Document(alice, "alice-plan.txt", "text/plain", 99, "b".repeat(64)));
 	}
 
 	@AfterEach

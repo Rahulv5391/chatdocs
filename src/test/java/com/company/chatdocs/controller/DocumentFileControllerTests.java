@@ -4,8 +4,8 @@ import com.company.chatdocs.TestDocuments;
 import com.company.chatdocs.TestcontainersConfiguration;
 import com.company.chatdocs.entity.AppUser;
 import com.company.chatdocs.repository.AppUserRepository;
+import com.company.chatdocs.repository.DocumentFileRepository;
 import com.company.chatdocs.repository.DocumentRepository;
-import com.company.chatdocs.service.FileStorageService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,13 +16,12 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 
-import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 @Import(TestcontainersConfiguration.class)
-@SpringBootTest(properties = "app.storage-dir=target/test-uploads")
+@SpringBootTest
 @ActiveProfiles("dev")
 @WithMockUser(username = "demo")
 class DocumentFileControllerTests {
@@ -37,11 +36,10 @@ class DocumentFileControllerTests {
 	AppUserRepository users;
 
 	@Autowired
-	FileStorageService storage;
+	DocumentFileRepository files;
 
 	@AfterEach
 	void cleanUp() {
-		documents.findAll().forEach(document -> storage.delete(document.getStoragePath()));
 		documents.deleteAll();
 	}
 
@@ -55,8 +53,7 @@ class DocumentFileControllerTests {
 		assertThat(response.getHeaders().getContentType()).hasToString("text/plain");
 		assertThat(response.getHeaders().getFirst(HttpHeaders.CONTENT_DISPOSITION))
 				.startsWith("inline").contains("notes.txt");
-		assertThat(response.getBody().getContentAsString(StandardCharsets.UTF_8))
-				.isEqualTo("hello from demo");
+		assertThat(response.getBody()).asString().isEqualTo("hello from demo");
 	}
 
 	@Test
@@ -69,7 +66,7 @@ class DocumentFileControllerTests {
 
 	private UUID store(String username, String fileName, String text) {
 		AppUser owner = users.findByUsername(username).orElseThrow();
-		return TestDocuments.saveText(storage, documents, owner, fileName, text).getId();
+		return TestDocuments.saveText(documents, files, owner, fileName, text).getId();
 	}
 
 }

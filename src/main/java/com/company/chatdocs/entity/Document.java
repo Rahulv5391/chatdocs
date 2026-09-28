@@ -35,9 +35,6 @@ public class Document extends BaseEntity {
 	@Column(name = "size_bytes", nullable = false)
 	private long sizeBytes;
 
-	@Column(name = "storage_path", nullable = false)
-	private String storagePath;
-
 	@Column(name = "checksum_sha256", nullable = false)
 	private String checksumSha256;
 
@@ -57,13 +54,11 @@ public class Document extends BaseEntity {
 	protected Document() {
 	}
 
-	public Document(AppUser owner, String fileName, String contentType, long sizeBytes, String storagePath,
-			String checksumSha256) {
+	public Document(AppUser owner, String fileName, String contentType, long sizeBytes, String checksumSha256) {
 		this.owner = owner;
 		this.fileName = fileName;
 		this.contentType = contentType;
 		this.sizeBytes = sizeBytes;
-		this.storagePath = storagePath;
 		this.checksumSha256 = checksumSha256;
 	}
 
@@ -94,10 +89,6 @@ public class Document extends BaseEntity {
 
 	public long getSizeBytes() {
 		return sizeBytes;
-	}
-
-	public String getStoragePath() {
-		return storagePath;
 	}
 
 	public String getChecksumSha256() {

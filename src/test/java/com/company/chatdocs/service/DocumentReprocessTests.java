@@ -26,7 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @Import({ TestcontainersConfiguration.class, FakeEmbeddingModelConfiguration.class })
-@SpringBootTest(properties = { "app.storage-dir=target/test-uploads", "app.ingestion.pause-between-batches=0s" })
+@SpringBootTest(properties = { "app.ingestion.pause-between-batches=0s" })
 @ActiveProfiles("dev")
 @WithMockUser(username = "demo")
 class DocumentReprocessTests {
@@ -46,14 +46,10 @@ class DocumentReprocessTests {
 	AppUserRepository users;
 
 	@Autowired
-	FileStorageService storage;
-
-	@Autowired
 	JdbcTemplate jdbc;
 
 	@AfterEach
 	void cleanUp() {
-		documents.findAll().forEach(document -> storage.delete(document.getStoragePath()));
 		documents.deleteAll();
 		jdbc.update("delete from vector_store");
 	}
@@ -95,8 +91,7 @@ class DocumentReprocessTests {
 	@Test
 	void cannotReprocessAnotherUsersDocument() {
 		var alice = users.findByUsername("alice").orElseThrow();
-		Document aliceDoc = documents.save(new Document(alice, "a.txt", "text/plain", 1,
-				storage.save(alice.getId(), "txt", "a".getBytes()), "e".repeat(64)));
+		Document aliceDoc = documents.save(new Document(alice, "a.txt", "text/plain", 1, "e".repeat(64)));
 		documents.updateStatus(aliceDoc.getId(), DocumentStatus.FAILED, 0, "x", Instant.now());
 
 		assertThatThrownBy(() -> documentService.reprocess(aliceDoc.getId()))
@@ -106,8 +101,7 @@ class DocumentReprocessTests {
 	@Test
 	void startupMarksInterruptedDocumentsAsFailed() {
 		var demo = users.findByUsername("demo").orElseThrow();
-		Document stuck = documents.save(new Document(demo, "stuck.txt", "text/plain", 1,
-				storage.save(demo.getId(), "txt", "s".getBytes()), "f".repeat(64)));
+		Document stuck = documents.save(new Document(demo, "stuck.txt", "text/plain", 1, "f".repeat(64)));
 		documents.updateStatus(stuck.getId(), DocumentStatus.PROCESSING, 0, null, Instant.now());
 
 		ingestionService.failInterruptedDocuments();

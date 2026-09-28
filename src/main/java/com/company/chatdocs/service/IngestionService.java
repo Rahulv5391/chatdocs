@@ -1,9 +1,11 @@
 package com.company.chatdocs.service;
 
 import com.company.chatdocs.config.AppProperties;
+import com.company.chatdocs.entity.DocumentFile;
 import com.company.chatdocs.entity.DocumentStatus;
 import com.company.chatdocs.event.DocumentUploadedEvent;
 import com.company.chatdocs.exception.AiServiceException;
+import com.company.chatdocs.repository.DocumentFileRepository;
 import com.company.chatdocs.repository.DocumentRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,14 +39,16 @@ public class IngestionService {
 	private static final int MAX_ERROR_LENGTH = 500;
 
 	private final DocumentRepository documents;
+	private final DocumentFileRepository files;
 	private final DocumentReaderFactory readerFactory;
 	private final EmbeddingThrottler embeddingThrottler;
 	private final VectorStore vectorStore;
 	private final TokenTextSplitter splitter;
 
-	IngestionService(DocumentRepository documents, DocumentReaderFactory readerFactory,
+	IngestionService(DocumentRepository documents, DocumentFileRepository files, DocumentReaderFactory readerFactory,
 			EmbeddingThrottler embeddingThrottler, VectorStore vectorStore, AppProperties properties) {
 		this.documents = documents;
+		this.files = files;
 		this.readerFactory = readerFactory;
 		this.embeddingThrottler = embeddingThrottler;
 		this.vectorStore = vectorStore;
@@ -103,9 +107,11 @@ public class IngestionService {
 	}
 
 	private List<Document> read(com.company.chatdocs.entity.Document document) {
+		DocumentFile file = files.findById(document.getId())
+				.orElseThrow(() -> new IngestionException("The original file is missing. Please upload it again."));
 		List<Document> pages;
 		try {
-			pages = readerFactory.read(document);
+			pages = readerFactory.read(document, file.getContent());
 		}
 		catch (RuntimeException e) {
 			throw new IngestionException("Could not read the file: " + rootMessage(e), e);
