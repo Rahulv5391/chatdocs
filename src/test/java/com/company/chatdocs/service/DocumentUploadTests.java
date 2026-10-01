@@ -1,5 +1,6 @@
 package com.company.chatdocs.service;
 
+import com.company.chatdocs.FakeChatModelConfiguration;
 import com.company.chatdocs.FakeEmbeddingModelConfiguration;
 import com.company.chatdocs.TestcontainersConfiguration;
 import com.company.chatdocs.dto.DocumentDto;
@@ -20,7 +21,7 @@ import org.springframework.test.context.ActiveProfiles;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-@Import({ TestcontainersConfiguration.class, FakeEmbeddingModelConfiguration.class })
+@Import({ TestcontainersConfiguration.class, FakeEmbeddingModelConfiguration.class, FakeChatModelConfiguration.class })
 @SpringBootTest(properties = { "app.ingestion.pause-between-batches=0s" })
 @ActiveProfiles("dev")
 @WithMockUser(username = "demo")
@@ -68,7 +69,17 @@ class DocumentUploadTests {
 		assertThatThrownBy(() -> documentService.upload(
 				new MockMultipartFile("file", "virus.exe", "application/octet-stream", new byte[] { 1, 2, 3 })))
 				.isInstanceOf(UploadRejectedException.class)
-				.hasMessage("Only PDF, DOCX, TXT and MD files are supported.");
+				.hasMessage("Only PDF, DOCX, XLSX, PPTX, HTML, EPUB, TXT and MD files are supported.");
+	}
+
+	@Test
+	void acceptsOfficeWebAndEbookFormats() {
+		assertThat(documentService.upload(file("sheet.xlsx", "x")).contentType())
+				.isEqualTo("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+		assertThat(documentService.upload(file("slides.PPTX", "p")).contentType())
+				.isEqualTo("application/vnd.openxmlformats-officedocument.presentationml.presentation");
+		assertThat(documentService.upload(file("page.htm", "h")).contentType()).isEqualTo("text/html");
+		assertThat(documentService.upload(file("book.epub", "e")).contentType()).isEqualTo("application/epub+zip");
 	}
 
 	@Test
@@ -76,6 +87,10 @@ class DocumentUploadTests {
 		assertThatThrownBy(() -> documentService.upload(pdf("empty.pdf", "")))
 				.isInstanceOf(UploadRejectedException.class)
 				.hasMessage("The file is empty.");
+	}
+
+	private static MockMultipartFile file(String name, String content) {
+		return new MockMultipartFile("file", name, "application/octet-stream", content.getBytes());
 	}
 
 	private static MockMultipartFile pdf(String name, String content) {

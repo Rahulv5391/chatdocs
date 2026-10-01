@@ -1,6 +1,5 @@
 package com.company.chatdocs.service;
 
-import com.company.chatdocs.config.AppProperties;
 import com.company.chatdocs.entity.DocumentFile;
 import com.company.chatdocs.entity.DocumentStatus;
 import com.company.chatdocs.event.DocumentUploadedEvent;
@@ -11,7 +10,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.reader.pdf.PagePdfDocumentReader;
-import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -29,7 +27,8 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * RAG step 1 (ingestion): read an uploaded file, split it into chunks, embed the chunks and store them in pgvector.
+ * RAG step 1 (ingestion): read an uploaded file (scanned PDF pages via OCR), split it into chunks, embed the chunks
+ * and store them in pgvector, then write a short summary of the document.
  */
 @Service
 public class IngestionService {
@@ -43,16 +42,19 @@ public class IngestionService {
 	private final DocumentReaderFactory readerFactory;
 	private final EmbeddingThrottler embeddingThrottler;
 	private final VectorStore vectorStore;
-	private final TokenTextSplitter splitter;
+	private final DocumentChunker chunker;
+	private final SummaryService summaries;
 
 	IngestionService(DocumentRepository documents, DocumentFileRepository files, DocumentReaderFactory readerFactory,
-			EmbeddingThrottler embeddingThrottler, VectorStore vectorStore, AppProperties properties) {
+			EmbeddingThrottler embeddingThrottler, VectorStore vectorStore, DocumentChunker chunker,
+			SummaryService summaries) {
 		this.documents = documents;
 		this.files = files;
 		this.readerFactory = readerFactory;
 		this.embeddingThrottler = embeddingThrottler;
 		this.vectorStore = vectorStore;
-		this.splitter = TokenTextSplitter.builder().withChunkSize(properties.ingestion().chunkSize()).build();
+		this.chunker = chunker;
+		this.summaries = summaries;
 	}
 
 	/** Runs on a background (virtual) thread, and only after the upload's transaction has committed. */
@@ -80,7 +82,10 @@ public class IngestionService {
 		vectorStore.delete(new FilterExpressionBuilder().eq(ChunkMetadata.DOCUMENT_ID, documentId.toString()).build());
 	}
 
-	/** Processes one document, recording READY with the chunk count, or FAILED with a readable reason. */
+	/**
+	 * Processes one document, recording READY with the chunk count, or FAILED with a readable reason. A READY
+	 * document then gets a summary if one can be written.
+	 */
 	public void ingest(UUID documentId) {
 		var document = documents.findById(documentId).orElse(null);
 		if (document == null) {
@@ -92,13 +97,17 @@ public class IngestionService {
 		deleteChunks(documentId);
 
 		try {
-			List<Document> chunks = withMetadata(document, splitter.apply(read(document)));
+			List<Document> pages = read(document);
+			List<Document> chunks = withMetadata(document, chunker.split(pages));
 			if (chunks.isEmpty()) {
 				throw new IngestionException("No extractable text. The file has too little text to index.");
 			}
 			embed(documentId, chunks);
 			log.info("Ingested '{}': {} chunks embedded and stored", document.getFileName(), chunks.size());
 			documents.updateStatus(documentId, DocumentStatus.READY, chunks.size(), null, Instant.now());
+			// After READY: the document can be chatted with while the (optional) summary is written, which can take
+			// minutes when Gemini's rate limit is hit.
+			documents.updateSummary(documentId, summaries.summarize(document.getFileName(), pages));
 		}
 		catch (IngestionException e) {
 			log.warn("Ingestion failed for '{}' ({}): {}", document.getFileName(), documentId, e.getMessage(), e);
@@ -113,11 +122,14 @@ public class IngestionService {
 		try {
 			pages = readerFactory.read(document, file.getContent());
 		}
+		catch (IngestionException e) {
+			throw e;
+		}
 		catch (RuntimeException e) {
 			throw new IngestionException("Could not read the file: " + rootMessage(e), e);
 		}
 		if (pages.stream().allMatch(page -> page.getText() == null || page.getText().isBlank())) {
-			throw new IngestionException("No extractable text. Scanned PDFs without a text layer aren't supported.");
+			throw new IngestionException("No extractable text. The file contains no text that could be read.");
 		}
 		return pages;
 	}
@@ -135,6 +147,10 @@ public class IngestionService {
 			Object page = chunk.getMetadata().get(PagePdfDocumentReader.METADATA_START_PAGE_NUMBER);
 			if (page != null) {
 				metadata.put(ChunkMetadata.PAGE, page);
+			}
+			Object section = chunk.getMetadata().get(ChunkMetadata.SECTION);
+			if (section != null) {
+				metadata.put(ChunkMetadata.SECTION, section);
 			}
 			result.add(new Document(chunk.getText(), metadata));
 		}
@@ -162,19 +178,6 @@ public class IngestionService {
 
 	private static String truncate(String message) {
 		return message.length() > MAX_ERROR_LENGTH ? message.substring(0, MAX_ERROR_LENGTH) : message;
-	}
-
-	/** A failure with a message that is safe and useful to show to the user. */
-	private static class IngestionException extends RuntimeException {
-
-		IngestionException(String message) {
-			super(message);
-		}
-
-		IngestionException(String message, Throwable cause) {
-			super(message, cause);
-		}
-
 	}
 
 }

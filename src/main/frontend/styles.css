@@ -557,6 +557,80 @@ vaadin-app-layout[overlay]::part(content) {
   white-space: normal;
 }
 
+.doc-meta a {
+  color: inherit;
+}
+
+.doc-meta a:hover {
+  color: var(--app-accent);
+}
+
+.link-button {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--app-accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
+.doc-row:has(.doc-summary) {
+  align-items: flex-start;
+}
+
+.doc-summary {
+  margin-top: 0.625rem;
+  padding: 0.75rem 0.875rem;
+  border-left: 2px solid var(--app-accent);
+  border-radius: 0 8px 8px 0;
+  background: var(--app-elevated);
+  font-size: 0.875rem;
+  color: var(--app-text-muted);
+}
+
+.doc-summary vaadin-markdown > :first-child {
+  margin-top: 0;
+}
+
+.doc-summary vaadin-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.url-import {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.url-import .url-field {
+  flex: 1;
+}
+
+.file-icon.xlsx {
+  background: rgb(74 222 128 / 14%);
+  color: #86efac;
+}
+
+.file-icon.pptx {
+  background: rgb(251 146 60 / 14%);
+  color: #fdba74;
+}
+
+.file-icon.html,
+.file-icon.htm {
+  background: rgb(45 212 191 / 14%);
+  color: #5eead4;
+}
+
+.file-icon.epub {
+  background: rgb(192 132 252 / 14%);
+  color: #d8b4fe;
+}
+
 .doc-actions {
   display: flex;
   align-items: center;

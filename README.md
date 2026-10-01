@@ -15,9 +15,13 @@ that library, and every answer includes clickable source citations that open the
 ## Features
 
 - **Accounts:** sign up, log in, log out. Every user sees only their own documents and chats.
-- **Document library:** upload PDF, DOCX, TXT and MD files (up to 20 MB). Files are indexed in the background, and a
-  status badge moves through *Queued → Processing → Ready* (or *Failed*, with the reason and a **Reprocess** button).
-  Duplicate uploads are detected by SHA-256 checksum.
+- **Document library:** upload PDF, DOCX, XLSX, PPTX, HTML, EPUB, TXT and MD files (up to 20 MB), or import a web
+  page by its address (only the page's main content is kept). Files are indexed in the background, and a status badge
+  moves through *Queued → Processing → Ready* (or *Failed*, with the reason and a **Reprocess** button, which also
+  rebuilds a ready document). Duplicate uploads are detected by SHA-256 checksum.
+- **Scanned PDFs:** pages without a text layer are read by Gemini (OCR), up to 20 pages per document.
+- **Summaries:** each ready document gets a short summary, shown on the Documents page.
+- **Smarter chunks:** chunks overlap a little and carry the heading of their section, so retrieval knows the context.
 - **Grounded chat:** answers stream in word by word and cite sources as `[1]`, `[2]`, …. If the documents don't
   contain the answer, the reply is *"I couldn't find that in your documents."*
 - **Citations:** hover a source chip to see the passage; click it to open the original file (PDFs open at the cited page).
@@ -40,7 +44,7 @@ that library, and every answer includes clickable source citations that open the
 | Database | PostgreSQL 17 with the pgvector extension (HNSW index, cosine distance) |
 | Migrations | Flyway |
 | Containers | Docker Compose (`pgvector/pgvector:pg17`), Testcontainers for tests |
-| Document parsing | Spring AI PDF reader (page by page), Apache Tika (DOCX, TXT, MD) |
+| Document parsing | Spring AI PDF reader (page by page) + PDFBox rendering and Gemini for scanned pages, Apache Tika (DOCX, XLSX, PPTX, HTML, EPUB, TXT, MD), jsoup (web page main content) |
 | Build | Maven (wrapper included); the Vaadin plugin downloads Node.js and builds the frontend |
 
 ## Spring and Spring Boot technologies used
@@ -363,6 +367,11 @@ Set in `src/main/resources/application.properties` (or override with environment
 |---|---|---|
 | `app.max-upload-size` | `20MB` | Largest accepted file |
 | `app.ingestion.chunk-size` | `500` | Target chunk size in tokens |
+| `app.ingestion.chunk-overlap` | `200` | Characters of the previous chunk repeated at the start of the next |
+| `app.ingestion.max-ocr-pages` | `20` | Most scanned PDF pages read by Gemini per document (one request each) |
+| `app.ingestion.summarize` | `true` | Write a summary per document (one chat request each; turn off to save quota) |
+| `app.ingestion.summary-input-chars` | `60000` | How much of the document the summary is based on |
+| `app.url-import.timeout` | `20s` | Longest a request to an imported web address may take |
 | `app.ingestion.batch-size` | `20` | Chunks embedded per Gemini request |
 | `app.ingestion.pause-between-batches` | `20s` | Pause between batches (free-tier token limit) |
 | `app.rag.top-k` | `5` | Chunks retrieved per question |
@@ -391,13 +400,15 @@ src/main/frontend/
   views/       File-based routes: login, signup, documents, chat/, chat/{sessionId}
   components/  ChatMessages, Composer, CitationChips, DocumentScopePicker, …
 src/main/resources/db/migration/   Flyway SQL migrations (V1–V7)
-src/main/resources/prompts/        Prompt templates (rag-system.st, rewrite-question.st)
+src/main/resources/prompts/        Prompt templates (rag-system.st, rewrite-question.st, ocr-page.st, summarize-document.st)
 compose.yaml                       pgvector container used in development
 ```
 
 ## Limitations
 
-- Scanned PDFs without a text layer can't be indexed (there is no OCR).
+- OCR and summaries use the same daily Gemini chat quota as answers, so heavy uploading can leave fewer answers for the day.
+- URL import only fetches public addresses (checked on every redirect), but the address is resolved again when
+  connecting, so a DNS server that changes its answer in between could still reach an internal address.
 - Ingestion runs inside the app process, so there is no external job queue. Interrupted jobs are marked failed on restart.
 - Original files are stored in PostgreSQL (`bytea`). That's simple and survives restarts on hosts without a disk, but
   it counts against the database size; a large library would be better in object storage.

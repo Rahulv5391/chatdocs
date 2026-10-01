@@ -1,14 +1,10 @@
 package com.company.chatdocs.service;
 
 import com.company.chatdocs.config.AppProperties;
-import com.company.chatdocs.exception.AiServiceException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.VectorStore;
-import org.springframework.core.retry.RetryException;
-import org.springframework.core.retry.RetryPolicy;
-import org.springframework.core.retry.RetryTemplate;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -26,19 +22,11 @@ public class EmbeddingThrottler {
 	private final VectorStore vectorStore;
 	private final int batchSize;
 	private final Duration pause;
-	private final RetryTemplate retryTemplate;
 
 	EmbeddingThrottler(VectorStore vectorStore, AppProperties properties) {
 		this.vectorStore = vectorStore;
 		this.batchSize = properties.ingestion().batchSize();
 		this.pause = properties.ingestion().pauseBetweenBatches();
-		// Waits 30s, then 60s, then 120s: per-minute quotas usually reset within that time.
-		this.retryTemplate = new RetryTemplate(RetryPolicy.builder()
-				.predicate(EmbeddingThrottler::shouldRetry)
-				.maxRetries(3)
-				.delay(Duration.ofSeconds(30))
-				.multiplier(2)
-				.build());
 	}
 
 	/** Embeds and stores all chunks. Each vectorStore.add call embeds one batch with Gemini, then inserts it. */
@@ -54,23 +42,10 @@ public class EmbeddingThrottler {
 	}
 
 	private void addWithRetry(List<Document> batch) {
-		try {
-			retryTemplate.execute(() -> {
-				vectorStore.add(batch);
-				return null;
-			});
-		}
-		catch (RetryException e) {
-			throw e.getCause() instanceof RuntimeException runtime ? runtime : new IllegalStateException(e.getCause());
-		}
-	}
-
-	private static boolean shouldRetry(Throwable error) {
-		boolean rateLimited = AiServiceException.isRateLimited(error);
-		if (rateLimited) {
-			log.warn("Gemini rate limit hit, retrying the batch: {}", error.getMessage());
-		}
-		return rateLimited;
+		RateLimitRetry.call(() -> {
+			vectorStore.add(batch);
+			return null;
+		});
 	}
 
 	private static void sleep(Duration duration) {

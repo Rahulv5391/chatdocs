@@ -3,6 +3,8 @@ package com.company.chatdocs.controller;
 import com.company.chatdocs.TestDocuments;
 import com.company.chatdocs.TestcontainersConfiguration;
 import com.company.chatdocs.entity.AppUser;
+import com.company.chatdocs.entity.Document;
+import com.company.chatdocs.entity.DocumentFile;
 import com.company.chatdocs.repository.AppUserRepository;
 import com.company.chatdocs.repository.DocumentFileRepository;
 import com.company.chatdocs.repository.DocumentRepository;
@@ -54,6 +56,17 @@ class DocumentFileControllerTests {
 		assertThat(response.getHeaders().getFirst(HttpHeaders.CONTENT_DISPOSITION))
 				.startsWith("inline").contains("notes.txt");
 		assertThat(response.getBody()).asString().isEqualTo("hello from demo");
+	}
+
+	@Test
+	void nonPdfFilesAreServedInASandboxSoScriptsCannotRun() {
+		AppUser demo = users.findByUsername("demo").orElseThrow();
+		UUID page = store("demo", "page.html", "<script>alert(1)</script>");
+		Document pdf = documents.save(new Document(demo, "a.pdf", "application/pdf", 4, "a".repeat(64)));
+		files.save(new DocumentFile(pdf.getId(), "%PDF".getBytes()));
+
+		assertThat(controller.file(page).getHeaders().getFirst("Content-Security-Policy")).isEqualTo("sandbox");
+		assertThat(controller.file(pdf.getId()).getHeaders().getFirst("Content-Security-Policy")).isNull();
 	}
 
 	@Test

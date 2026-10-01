@@ -48,6 +48,12 @@ public class Document extends BaseEntity {
 	@Column(name = "error_message")
 	private String errorMessage;
 
+	private String summary;
+
+	/** The web address the document was imported from; null for uploaded files. */
+	@Column(name = "source_url", updatable = false)
+	private String sourceUrl;
+
 	@Column(name = "updated_at", nullable = false)
 	private Instant updatedAt;
 
@@ -62,11 +68,18 @@ public class Document extends BaseEntity {
 		this.checksumSha256 = checksumSha256;
 	}
 
+	public Document(AppUser owner, String fileName, String contentType, long sizeBytes, String checksumSha256,
+			String sourceUrl) {
+		this(owner, fileName, contentType, sizeBytes, checksumSha256);
+		this.sourceUrl = sourceUrl;
+	}
+
 	/** Puts the document back in the queue so ingestion runs again. */
 	public void requeue() {
 		status = DocumentStatus.UPLOADED;
 		chunkCount = 0;
 		errorMessage = null;
+		summary = null;
 	}
 
 	@PrePersist
@@ -105,6 +118,14 @@ public class Document extends BaseEntity {
 
 	public String getErrorMessage() {
 		return errorMessage;
+	}
+
+	public String getSummary() {
+		return summary;
+	}
+
+	public String getSourceUrl() {
+		return sourceUrl;
 	}
 
 }

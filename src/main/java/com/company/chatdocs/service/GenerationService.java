@@ -24,7 +24,8 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
- * RAG step 3 (generation): the only place that calls the chat LLM. Given a question, the recent conversation
+ * RAG step 3 (generation): the only place that calls the chat LLM to answer questions (ingestion uses it too, in
+ * {@link OcrService} and {@link SummaryService}). Given a question, the recent conversation
  * and the retrieved chunks, streams Gemini's answer, grounded in those chunks, with [n] citation markers.
  */
 @Service

@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { ViewConfig } from '@vaadin/hilla-file-router/types.js';
-import { ConfirmDialog, Tooltip, Upload, type UploadRequestEvent } from '@vaadin/react-components';
+import { ConfirmDialog, Markdown, TextField, Tooltip, Upload, type UploadRequestEvent } from '@vaadin/react-components';
 import { DocumentService } from 'Frontend/generated/endpoints';
 import type DocumentDto from 'Frontend/generated/com/company/chatdocs/dto/DocumentDto';
 import DocumentStatus from 'Frontend/generated/com/company/chatdocs/entity/DocumentStatus';
 import StatusBadge from 'Frontend/components/StatusBadge';
-import { FileIcon, RefreshIcon, TrashIcon, UploadIcon } from 'Frontend/components/Icons';
+import { FileIcon, LinkIcon, RefreshIcon, TrashIcon, UploadIcon } from 'Frontend/components/Icons';
 import { errorMessage, showError, showSuccess } from 'Frontend/util/notifications';
 
 export const config: ViewConfig = {
@@ -13,10 +13,22 @@ export const config: ViewConfig = {
 };
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
+const ACCEPTED_FILES = '.pdf,.docx,.xlsx,.pptx,.html,.htm,.epub,.txt,.md';
 const POLL_INTERVAL_MS = 3000;
+
+// The summary is written after a document becomes READY, so keep polling a while for new documents without one.
+const SUMMARY_WAIT_MS = 5 * 60 * 1000;
 
 function isInProgress(document: DocumentDto) {
   return document.status === DocumentStatus.UPLOADED || document.status === DocumentStatus.PROCESSING;
+}
+
+function isAwaitingSummary(document: DocumentDto) {
+  return (
+    document.status === DocumentStatus.READY &&
+    !document.summary &&
+    Date.now() - new Date(document.createdAt).getTime() < SUMMARY_WAIT_MS
+  );
 }
 
 function formatSize(bytes: number) {
@@ -27,6 +39,14 @@ function formatSize(bytes: number) {
 
 function extension(fileName: string) {
   return fileName.split('.').pop()?.toLowerCase() ?? '';
+}
+
+function hostOf(url: string) {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
 }
 
 function meta(document: DocumentDto) {
@@ -44,6 +64,9 @@ export default function DocumentsView() {
   const [documents, setDocuments] = useState<DocumentDto[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [toDelete, setToDelete] = useState<DocumentDto>();
+  const [url, setUrl] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [openSummaries, setOpenSummaries] = useState<Set<string>>(new Set());
 
   const refresh = useCallback(
     () =>
@@ -58,8 +81,9 @@ export default function DocumentsView() {
     refresh();
   }, [refresh]);
 
-  // Ingestion runs in the background, so poll while any document is still queued or processing.
-  const polling = documents.some(isInProgress);
+  // Ingestion runs in the background, so poll while any document is still queued or processing (or a new one is
+  // still waiting for its summary).
+  const polling = documents.some((d) => isInProgress(d) || isAwaitingSummary(d));
   useEffect(() => {
     if (!polling) return;
     const timer = setInterval(refresh, POLL_INTERVAL_MS);
@@ -83,6 +107,30 @@ export default function DocumentsView() {
       file.status = '';
       upload.files = [...upload.files];
     }
+  }
+
+  async function importUrl(event: FormEvent) {
+    event.preventDefault();
+    if (!url.trim() || importing) return;
+    setImporting(true);
+    try {
+      const document = await DocumentService.importUrl(url.trim());
+      showSuccess(`Imported ${document.fileName}`);
+      setUrl('');
+      await refresh();
+    } catch (e) {
+      showError(errorMessage(e, 'Import failed.'));
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  function toggleSummary(id: string) {
+    setOpenSummaries((open) => {
+      const next = new Set(open);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
   }
 
   async function reprocess(document: DocumentDto) {
@@ -137,7 +185,7 @@ export default function DocumentsView() {
 
         <Upload
           className="dropzone"
-          accept=".pdf,.docx,.txt,.md"
+          accept={ACCEPTED_FILES}
           maxFileSize={MAX_FILE_SIZE}
           onUploadRequest={handleUploadRequest}
           onFileReject={(e) => showError(`${e.detail.file.name}: ${e.detail.error}`)}
@@ -148,9 +196,25 @@ export default function DocumentsView() {
               <UploadIcon size={22} />
             </span>
             <span className="drop-title">Drop files here or browse</span>
-            <span className="drop-hint">PDF, DOCX, TXT or Markdown · up to 20 MB each</span>
+            <span className="drop-hint">PDF (scans too), Word, Excel, PowerPoint, HTML, EPUB, TXT or Markdown · up to 20 MB each</span>
           </div>
         </Upload>
+
+        <form className="url-import" onSubmit={importUrl}>
+          <TextField
+            className="url-field"
+            placeholder="Or paste a web address, e.g. https://example.com/handbook"
+            aria-label="Web address to import"
+            value={url}
+            disabled={importing}
+            onValueChanged={(e) => setUrl(e.detail.value)}
+          >
+            <LinkIcon slot="prefix" size={16} />
+          </TextField>
+          <button type="submit" className="btn" disabled={importing || !url.trim()}>
+            {importing ? 'Importing…' : 'Import'}
+          </button>
+        </form>
 
         {loaded && documents.length === 0 ? (
           <div className="empty-state">
@@ -176,12 +240,39 @@ export default function DocumentsView() {
                   {document.status === DocumentStatus.FAILED ? (
                     <div className="doc-meta error">{document.errorMessage ?? 'Unknown error'}</div>
                   ) : (
-                    <div className="doc-meta">{meta(document)}</div>
+                    <div className="doc-meta">
+                      {meta(document)}
+                      {document.sourceUrl && (
+                        <>
+                          {' · from '}
+                          <a href={document.sourceUrl} target="_blank" rel="noopener noreferrer">
+                            {hostOf(document.sourceUrl)}
+                          </a>
+                        </>
+                      )}
+                      {document.status === DocumentStatus.READY && document.summary && (
+                        <>
+                          {' · '}
+                          <button
+                            className="link-button"
+                            aria-expanded={openSummaries.has(document.id)}
+                            onClick={() => toggleSummary(document.id)}
+                          >
+                            {openSummaries.has(document.id) ? 'Hide summary' : 'Summary'}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
+                  {document.summary && openSummaries.has(document.id) && (
+                    <div className="doc-summary">
+                      <Markdown>{document.summary}</Markdown>
+                    </div>
                   )}
                 </div>
                 <StatusBadge status={document.status} />
                 <div className="doc-actions">
-                  {document.status === DocumentStatus.FAILED && (
+                  {(document.status === DocumentStatus.FAILED || document.status === DocumentStatus.READY) && (
                     <>
                       <button
                         id={`reprocess-${document.id}`}
@@ -191,7 +282,11 @@ export default function DocumentsView() {
                       >
                         <RefreshIcon size={16} />
                       </button>
-                      <Tooltip for={`reprocess-${document.id}`} text="Reprocess" position="top" />
+                      <Tooltip
+                        for={`reprocess-${document.id}`}
+                        text={document.status === DocumentStatus.READY ? 'Reprocess (rebuild chunks and summary)' : 'Reprocess'}
+                        position="top"
+                      />
                     </>
                   )}
                   <button

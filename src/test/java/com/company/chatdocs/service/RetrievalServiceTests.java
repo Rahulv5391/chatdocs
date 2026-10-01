@@ -1,5 +1,6 @@
 package com.company.chatdocs.service;
 
+import com.company.chatdocs.FakeChatModelConfiguration;
 import com.company.chatdocs.FakeEmbeddingModelConfiguration;
 import com.company.chatdocs.TestDocuments;
 import com.company.chatdocs.TestcontainersConfiguration;
@@ -28,7 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * demo and alice both have a document about the same topic. Retrieval must never mix them up,
  * whatever the question or document scope. Embeddings come from the fake model (no Gemini quota).
  */
-@Import({ TestcontainersConfiguration.class, FakeEmbeddingModelConfiguration.class })
+@Import({ TestcontainersConfiguration.class, FakeEmbeddingModelConfiguration.class, FakeChatModelConfiguration.class })
 @SpringBootTest(properties = { "app.ingestion.pause-between-batches=0s",
 		"app.rag.similarity-threshold=0.1" })
 @ActiveProfiles("dev")

@@ -41,7 +41,14 @@ public class DocumentFileController {
 		if (file == null) {
 			return ResponseEntity.notFound().build();
 		}
-		return ResponseEntity.ok()
+		var response = ResponseEntity.ok();
+		if (!MediaType.APPLICATION_PDF_VALUE.equals(document.getContentType())) {
+			// An imported web page may contain scripts. Served from our origin they would run with the user's
+			// session, so the browser is told to show the file without running anything. (Chrome's PDF viewer
+			// doesn't work in a sandbox, and a PDF can't run page scripts anyway.)
+			response.header("Content-Security-Policy", "sandbox");
+		}
+		return response
 				.contentType(MediaType.parseMediaType(document.getContentType()))
 				// inline = show in the browser tab (PDF viewer) instead of downloading
 				.header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.inline()

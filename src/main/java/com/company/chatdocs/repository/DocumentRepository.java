@@ -36,6 +36,12 @@ public interface DocumentRepository extends JpaRepository<Document, UUID> {
 			where d.id = :id""")
 	int updateStatus(UUID id, DocumentStatus status, int chunkCount, @Nullable String errorMessage, Instant now);
 
+	/** Stores the summary written at the end of ingestion. Like updateStatus, never re-creates a deleted row. */
+	@Transactional
+	@Modifying
+	@Query("update Document d set d.summary = :summary where d.id = :id")
+	int updateSummary(UUID id, @Nullable String summary);
+
 	/** Marks every queued or processing document as FAILED. Used at startup, when no ingestion can be running. */
 	@Transactional
 	@Modifying

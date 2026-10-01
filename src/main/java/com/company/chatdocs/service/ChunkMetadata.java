@@ -16,6 +16,9 @@ public final class ChunkMetadata {
 
 	public static final String CHUNK_INDEX = "chunk_index";
 
+	/** Heading of the section the chunk belongs to; absent if none was found. */
+	public static final String SECTION = "section";
+
 	private ChunkMetadata() {
 	}
 

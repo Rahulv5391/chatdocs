@@ -15,8 +15,9 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Replaces Gemini chat in tests. Streamed answers use {@link FakeChatModel#reply}; the non-streaming call (used to
- * rewrite follow-up questions) returns {@link FakeChatModel#rewriteReply}, or the follow-up unchanged if that is null.
+ * Replaces Gemini chat in tests. Streamed answers use {@link FakeChatModel#reply}. Non-streaming calls: a page image
+ * (OCR) gets {@link FakeChatModel#ocrReply}, a summary request gets {@link FakeChatModel#summaryReply}, and the
+ * follow-up rewrite gets {@link FakeChatModel#rewriteReply}, or the follow-up unchanged if that is null.
  */
 @TestConfiguration(proxyBeanMethods = false)
 public class FakeChatModelConfiguration {
@@ -31,6 +32,7 @@ public class FakeChatModelConfiguration {
 
 		public static final String DEFAULT_REPLY = "Employees get 24 days of annual leave [1].";
 
+		/** Calls made while chatting (answers and follow-up rewrites); OCR and summaries have their own counters. */
 		public final AtomicInteger calls = new AtomicInteger();
 
 		public volatile String reply = DEFAULT_REPLY;
@@ -45,6 +47,18 @@ public class FakeChatModelConfiguration {
 
 		public volatile String rewriteReply;
 
+		public static final String DEFAULT_OCR_REPLY = "Remote work policy. Employees may work from home on Fridays.";
+
+		public volatile String ocrReply = DEFAULT_OCR_REPLY;
+
+		public final AtomicInteger ocrCalls = new AtomicInteger();
+
+		public static final String DEFAULT_SUMMARY = "A short summary of the document.";
+
+		public volatile String summaryReply = DEFAULT_SUMMARY;
+
+		public final AtomicInteger summaryCalls = new AtomicInteger();
+
 		/** Delay between streamed words, to test Stop while an answer is still coming in. */
 		public volatile Duration streamDelay = Duration.ZERO;
 
@@ -53,6 +67,14 @@ public class FakeChatModelConfiguration {
 
 		@Override
 		public ChatResponse call(Prompt prompt) {
+			if (!prompt.getUserMessage().getMedia().isEmpty()) {
+				ocrCalls.incrementAndGet();
+				return response(ocrReply);
+			}
+			if (prompt.getUserMessage().getText().contains("Document to summarize")) {
+				summaryCalls.incrementAndGet();
+				return response(summaryReply);
+			}
 			calls.incrementAndGet();
 			rewriteCalls.incrementAndGet();
 			lastCallPrompt = prompt;
@@ -81,6 +103,10 @@ public class FakeChatModelConfiguration {
 			rewriteCalls.set(0);
 			reply = DEFAULT_REPLY;
 			rewriteReply = null;
+			ocrCalls.set(0);
+			ocrReply = DEFAULT_OCR_REPLY;
+			summaryCalls.set(0);
+			summaryReply = DEFAULT_SUMMARY;
 			lastCallPrompt = null;
 			lastStreamPrompt = null;
 			streamDelay = Duration.ZERO;

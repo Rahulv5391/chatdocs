@@ -16,12 +16,14 @@ public record DocumentDto(
 		@NonNull DocumentStatus status,
 		int chunkCount,
 		@Nullable String errorMessage,
+		@Nullable String summary,
+		@Nullable String sourceUrl,
 		@NonNull Instant createdAt) {
 
 	public static DocumentDto from(Document document) {
 		return new DocumentDto(document.getId(), document.getFileName(), document.getContentType(),
 				document.getSizeBytes(), document.getStatus(), document.getChunkCount(), document.getErrorMessage(),
-				document.getCreatedAt());
+				document.getSummary(), document.getSourceUrl(), document.getCreatedAt());
 	}
 
 }

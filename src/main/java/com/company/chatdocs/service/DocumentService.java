@@ -15,13 +15,19 @@ import com.company.chatdocs.repository.DocumentRepository;
 import com.vaadin.hilla.BrowserCallable;
 import jakarta.annotation.security.PermitAll;
 import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.util.MimeType;
 import org.springframework.util.StringUtils;
+import org.springframework.web.util.HtmlUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
@@ -29,6 +35,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @BrowserCallable
 @PermitAll
@@ -38,8 +46,31 @@ public class DocumentService {
 	private static final Map<String, String> ALLOWED_TYPES = Map.of(
 			"pdf", "application/pdf",
 			"docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+			"xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+			"pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+			"html", "text/html",
+			"htm", "text/html",
+			"epub", "application/epub+zip",
 			"txt", "text/plain",
 			"md", "text/markdown");
+
+	static final String UNSUPPORTED_TYPE_MESSAGE =
+			"Only PDF, DOCX, XLSX, PPTX, HTML, EPUB, TXT and MD files are supported.";
+
+	/** Content types a web address may return, and the extension the document is stored under. */
+	private static final Map<String, String> URL_CONTENT_TYPES = Map.of(
+			"text/html", "html",
+			"application/xhtml+xml", "html",
+			"application/pdf", "pdf",
+			"text/plain", "txt",
+			"text/markdown", "md");
+
+	private static final Pattern HTML_TITLE = Pattern.compile("(?is)<title[^>]*>(.*?)</title>");
+
+	/** Characters that aren't allowed in file names on common systems. */
+	private static final Pattern UNSAFE_NAME_CHARS = Pattern.compile("[\\\\/:*?\"<>|\\p{Cntrl}]");
+
+	private static final int MAX_IMPORTED_NAME_LENGTH = 100;
 
 	private final DocumentRepository documents;
 	private final CurrentUser currentUser;
@@ -47,15 +78,20 @@ public class DocumentService {
 	private final AppProperties properties;
 	private final ApplicationEventPublisher events;
 	private final IngestionService ingestion;
+	private final UrlFetcher urlFetcher;
+	private final TransactionTemplate transaction;
 
 	DocumentService(DocumentRepository documents, DocumentFileRepository files, CurrentUser currentUser,
-			AppProperties properties, ApplicationEventPublisher events, IngestionService ingestion) {
+			AppProperties properties, ApplicationEventPublisher events, IngestionService ingestion,
+			UrlFetcher urlFetcher, PlatformTransactionManager transactionManager) {
 		this.documents = documents;
 		this.files = files;
 		this.currentUser = currentUser;
 		this.properties = properties;
 		this.events = events;
 		this.ingestion = ingestion;
+		this.urlFetcher = urlFetcher;
+		this.transaction = new TransactionTemplate(transactionManager);
 	}
 
 	/** Returns only the logged-in user's documents, newest first. */
@@ -78,7 +114,7 @@ public class DocumentService {
 		String extension = String.valueOf(StringUtils.getFilenameExtension(fileName)).toLowerCase(Locale.ROOT);
 
 		if (!ALLOWED_TYPES.containsKey(extension)) {
-			throw new UploadRejectedException("Only PDF, DOCX, TXT and MD files are supported.");
+			throw new UploadRejectedException(UNSUPPORTED_TYPE_MESSAGE);
 		}
 		if (file.isEmpty()) {
 			throw new UploadRejectedException("The file is empty.");
@@ -88,15 +124,43 @@ public class DocumentService {
 					"The file is too large. The limit is " + properties.maxUploadSize().toMegabytes() + " MB.");
 		}
 
-		byte[] content = readBytes(file);
+		return save(fileName, ALLOWED_TYPES.get(extension), readBytes(file), null);
+	}
+
+	/**
+	 * Downloads a web page (or a PDF or text file) and adds it like an upload. A web page is named after its title.
+	 * The download happens before any database transaction is opened.
+	 *
+	 * @throws UploadRejectedException with a user-friendly message if the address can't be imported
+	 */
+	public @NonNull DocumentDto importUrl(@NonNull String url) {
+		UrlFetcher.Page page = urlFetcher.fetch(url);
+		String mediaType = mediaType(page.contentType());
+		String extension = URL_CONTENT_TYPES.get(mediaType);
+		if (extension == null) {
+			throw new UploadRejectedException("That address returned " + (mediaType.isEmpty() ? "an unknown type"
+					: mediaType) + ", which isn't supported. Web pages, PDFs and plain text files are.");
+		}
+		if (page.content().length == 0) {
+			throw new UploadRejectedException("The page is empty.");
+		}
+		String fileName = importedFileName(page, extension);
+		return transaction.execute(
+				status -> save(fileName, ALLOWED_TYPES.get(extension), page.content(), page.uri().toString()));
+	}
+
+	/** Saves the file and its document row (status UPLOADED); ingestion starts after the transaction commits. */
+	private DocumentDto save(String fileName, String contentType, byte[] content, @Nullable String sourceUrl) {
 		String checksum = sha256(content);
 		AppUser owner = currentUser.get();
 		if (documents.existsByOwnerIdAndChecksumSha256(owner.getId(), checksum)) {
-			throw new UploadRejectedException("You have already uploaded this file.");
+			throw new UploadRejectedException(sourceUrl == null
+					? "You have already uploaded this file."
+					: "You already have a document with exactly this content.");
 		}
 
 		Document document = documents.saveAndFlush(
-				new Document(owner, fileName, ALLOWED_TYPES.get(extension), content.length, checksum));
+				new Document(owner, fileName, contentType, content.length, checksum, sourceUrl));
 		files.save(new DocumentFile(document.getId(), content));
 		// IngestionService picks this up after the transaction commits.
 		events.publishEvent(new DocumentUploadedEvent(document.getId()));
@@ -118,16 +182,17 @@ public class DocumentService {
 	}
 
 	/**
-	 * Runs ingestion again for a FAILED document. Old chunks are cleared when ingestion starts.
+	 * Runs ingestion again for a FAILED document, or for a READY one (e.g. to pick up improved chunking).
+	 * Old chunks are cleared when ingestion starts.
 	 *
 	 * @throws DocumentNotFoundException      if the id doesn't exist or belongs to another user
-	 * @throws InvalidDocumentStateException if the document isn't FAILED
+	 * @throws InvalidDocumentStateException if the document is still queued or processing
 	 */
 	@Transactional
 	public @NonNull DocumentDto reprocess(@NonNull UUID id) {
 		Document document = ownDocument(id);
-		if (document.getStatus() != DocumentStatus.FAILED) {
-			throw new InvalidDocumentStateException("Only failed documents can be reprocessed.");
+		if (document.getStatus() != DocumentStatus.FAILED && document.getStatus() != DocumentStatus.READY) {
+			throw new InvalidDocumentStateException("This document is still being processed.");
 		}
 		document.requeue();
 		events.publishEvent(new DocumentUploadedEvent(id));
@@ -136,6 +201,41 @@ public class DocumentService {
 
 	private Document ownDocument(UUID id) {
 		return documents.findByIdAndOwnerId(id, currentUser.get().getId()).orElseThrow(DocumentNotFoundException::new);
+	}
+
+	/** "text/html; charset=utf-8" becomes "text/html"; a missing or unparseable header becomes "". */
+	private static String mediaType(String contentType) {
+		try {
+			MimeType type = MimeType.valueOf(contentType);
+			return (type.getType() + "/" + type.getSubtype()).toLowerCase(Locale.ROOT);
+		}
+		catch (IllegalArgumentException e) {
+			return "";
+		}
+	}
+
+	/** The page title for HTML, otherwise the last part of the address, made safe as a file name. */
+	private static String importedFileName(UrlFetcher.Page page, String extension) {
+		String name = null;
+		if (extension.equals("html")) {
+			String head = new String(page.content(), 0, Math.min(page.content().length, 65_536), StandardCharsets.UTF_8);
+			Matcher title = HTML_TITLE.matcher(head);
+			if (title.find()) {
+				name = HtmlUtils.htmlUnescape(title.group(1));
+			}
+		}
+		if (name == null || name.isBlank()) {
+			String path = page.uri().getPath() == null ? "" : page.uri().getPath();
+			name = StringUtils.getFilename(StringUtils.trimTrailingCharacter(path, '/'));
+		}
+		name = name == null ? "" : UNSAFE_NAME_CHARS.matcher(name).replaceAll(" ").replaceAll("\\s+", " ").strip();
+		if (name.length() > MAX_IMPORTED_NAME_LENGTH) {
+			name = name.substring(0, MAX_IMPORTED_NAME_LENGTH).strip();
+		}
+		if (name.isEmpty()) {
+			name = page.uri().getHost();
+		}
+		return name.toLowerCase(Locale.ROOT).endsWith("." + extension) ? name : name + "." + extension;
 	}
 
 	private static byte[] readBytes(MultipartFile file) {

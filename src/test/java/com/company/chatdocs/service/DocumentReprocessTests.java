@@ -1,5 +1,6 @@
 package com.company.chatdocs.service;
 
+import com.company.chatdocs.FakeChatModelConfiguration;
 import com.company.chatdocs.FakeEmbeddingModelConfiguration;
 import com.company.chatdocs.TestDocuments;
 import com.company.chatdocs.TestcontainersConfiguration;
@@ -25,7 +26,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-@Import({ TestcontainersConfiguration.class, FakeEmbeddingModelConfiguration.class })
+@Import({ TestcontainersConfiguration.class, FakeEmbeddingModelConfiguration.class, FakeChatModelConfiguration.class })
 @SpringBootTest(properties = { "app.ingestion.pause-between-batches=0s" })
 @ActiveProfiles("dev")
 @WithMockUser(username = "demo")
@@ -80,12 +81,26 @@ class DocumentReprocessTests {
 	}
 
 	@Test
-	void onlyFailedDocumentsCanBeReprocessed() throws Exception {
+	void readyDocumentCanBeReprocessed() throws Exception {
 		UUID id = uploadAndWaitForReady("guide.txt");
+		int chunkCount = documents.findById(id).orElseThrow().getChunkCount();
 
-		assertThatThrownBy(() -> documentService.reprocess(id))
+		assertThat(documentService.reprocess(id).status()).isEqualTo(DocumentStatus.UPLOADED);
+		Document document = TestDocuments.awaitIngestion(documents, id);
+
+		assertThat(document.getStatus()).isEqualTo(DocumentStatus.READY);
+		assertThat(chunkRows(id)).isEqualTo(chunkCount);
+	}
+
+	@Test
+	void documentStillBeingProcessedCannotBeReprocessed() {
+		var demo = users.findByUsername("demo").orElseThrow();
+		Document queued = documents.save(new Document(demo, "q.txt", "text/plain", 1, "d".repeat(64)));
+		documents.updateStatus(queued.getId(), DocumentStatus.PROCESSING, 0, null, Instant.now());
+
+		assertThatThrownBy(() -> documentService.reprocess(queued.getId()))
 				.isInstanceOf(InvalidDocumentStateException.class)
-				.hasMessage("Only failed documents can be reprocessed.");
+				.hasMessage("This document is still being processed.");
 	}
 
 	@Test

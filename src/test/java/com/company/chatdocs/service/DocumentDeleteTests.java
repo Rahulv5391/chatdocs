@@ -1,5 +1,6 @@
 package com.company.chatdocs.service;
 
+import com.company.chatdocs.FakeChatModelConfiguration;
 import com.company.chatdocs.FakeEmbeddingModelConfiguration;
 import com.company.chatdocs.TestDocuments;
 import com.company.chatdocs.TestcontainersConfiguration;
@@ -22,7 +23,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-@Import({ TestcontainersConfiguration.class, FakeEmbeddingModelConfiguration.class })
+@Import({ TestcontainersConfiguration.class, FakeEmbeddingModelConfiguration.class, FakeChatModelConfiguration.class })
 @SpringBootTest(properties = { "app.ingestion.pause-between-batches=0s" })
 @ActiveProfiles("dev")
 @WithMockUser(username = "demo")
